@@ -1,4 +1,4 @@
-"""ProofPay API - FastAPI. Serves the built React UI from ../frontend/dist when present."""
+"""Afterword API (FastAPI). Serves the built React UI from ../frontend/dist when present."""
 from __future__ import annotations
 
 import asyncio
@@ -8,39 +8,27 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import agents_contract, agents_ops, agents_proof, db, evidence, llm
+from . import activity, certificate, closure, db, letters, llm, merchant, notices, seed
 from . import paypal_gateway as pp
 
 ROOT = Path(__file__).resolve().parents[2]
-SAMPLES = Path(__file__).resolve().parents[1] / "samples"
 DIST = ROOT / "frontend" / "dist"
-POLL_SECONDS = int(os.getenv("PROOFPAY_POLL_SECONDS", "15"))
-
-
-async def _poller():
-    while True:
-        await asyncio.sleep(POLL_SECONDS)
-        try:
-            await asyncio.to_thread(pp.sync_statuses)
-        except Exception:  # noqa: BLE001
-            pass
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     db.conn()
-    task = asyncio.create_task(_poller())
-    if os.getenv("PROOFPAY_SEED_ON_START") == "1" and not db.query("SELECT id FROM contracts LIMIT 1"):
-        await asyncio.to_thread(seed_demo)
+    seed.ensure_specimen()
+    if os.getenv("AFTERWORD_SEED_ON_START", "1") == "1" and not db.query("SELECT id FROM merchants LIMIT 1"):
+        await asyncio.to_thread(seed.seed_demo)
     yield
-    task.cancel()
 
 
-app = FastAPI(title="ProofPay", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Afterword", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -48,260 +36,296 @@ def _404(what: str):
     raise HTTPException(404, f"{what} not found")
 
 
-# ----------------------------------------------------------------------------- status
 @app.get("/api/status")
 def status():
     return {"paypal_mode": pp.MODE, "llm": llm.model_name(), "llm_live": llm.available(),
-            "proof_threshold": pp.PROOF_THRESHOLD, "amount_ceiling": pp.AMOUNT_CEILING}
+            "min_score": merchant.MIN_SCORE, "protocol": notices.PROTOCOL}
 
 
-# ----------------------------------------------------------------------------- contracts
-@app.get("/api/samples")
-def samples():
-    return [{"name": p.stem, "text": p.read_text()} for p in sorted(SAMPLES.glob("contract_*.txt"))]
+@app.get("/.well-known/afterword-hub.json")
+def hub_key():
+    return {"protocol": notices.PROTOCOL, "algorithm": "Ed25519", "public_key": notices.public_key_b64()}
 
 
-@app.post("/api/contracts")
-async def create_contract(text: str = Form(""), file: UploadFile | None = File(None)):
-    if file is not None and file.filename:
-        data = await file.read()
-        text = agents_proof.gather_evidence("file", "", data, file.filename)
-    if not text.strip():
-        raise HTTPException(400, "Paste contract text or upload a file")
-    return await asyncio.to_thread(_ingest_contract, text)
+# =============================================================================== family side
+class NewCase(BaseModel):
+    claimant_name: str
+    claimant_email: str
+    relationship: str = "family"
+    language: str = "en"
+    deceased_email: str = ""
 
 
-def _ingest_contract(text: str, client_email_override: str | None = None) -> dict:
-    ext, engine = agents_contract.extract(text)
-    cid = db.new_id("ctr")
-    db.insert("contracts", {
-        "id": cid, "title": ext.title, "freelancer_name": ext.freelancer_name, "freelancer_email": ext.freelancer_email,
-        "client_name": ext.client_name, "client_email": client_email_override or ext.client_email, "currency": ext.currency,
-        "total_amount": ext.total_amount, "raw_text": text, "summary": ext.summary, "created_at": db.now(),
-        "risk_flags": ext.risk_flags, "engine": engine, "sac_code": ext.sac_code,
-    })
-    for i, m in enumerate(ext.milestones, start=1):
-        db.insert("milestones", {
-            "id": db.new_id("ms"), "contract_id": cid, "seq": i, "name": m.name, "amount": m.amount, "due_date": m.due_date,
-            "acceptance_criteria": m.acceptance_criteria, "status": "DRAFT", "updated_at": db.now(),
-        })
-    db.audit("contract_agent", "EXTRACTED contract", None, {"contract_id": cid, "engine": engine, "milestones": len(ext.milestones),
-                                                             "risk_flags": ext.risk_flags})
-    return get_contract(cid)
+@app.post("/api/cases")
+def create_case(body: NewCase):
+    cid = db.new_id("case")
+    db.insert("cases", {"id": cid, **body.model_dump(), "status": "DRAFT", "created_at": db.now()})
+    db.audit("family", "OPENED case", cid, {"claimant": body.claimant_name, "relationship": body.relationship})
+    return get_case(cid)
 
 
-@app.get("/api/contracts")
-def list_contracts():
-    out = []
-    for c in db.query("SELECT * FROM contracts ORDER BY created_at DESC"):
-        c.pop("raw_text", None)
-        c["milestones"] = db.query("SELECT * FROM milestones WHERE contract_id=? ORDER BY seq", (c["id"],))
-        out.append(c)
-    return out
+@app.get("/api/cases")
+def list_cases():
+    return db.query("SELECT id, deceased_name, claimant_name, status, created_at FROM cases ORDER BY created_at DESC")
 
 
-@app.get("/api/contracts/{cid}")
-def get_contract(cid: str):
-    c = db.get("contracts", cid) or _404("contract")
-    c["milestones"] = db.query("SELECT * FROM milestones WHERE contract_id=? ORDER BY seq", (cid,))
+@app.get("/api/cases/{cid}")
+def get_case(cid: str):
+    c = db.get("cases", cid) or _404("case")
+    fs = db.query("SELECT * FROM findings WHERE case_id=? ORDER BY rowid", (cid,))
+    for f in fs:
+        n = db.get("notices", f["notice_id"]) if f["notice_id"] else None
+        f["notice"] = {k: n[k] for k in ("id", "status", "outcome", "reply", "received_at", "closed_at")} if n else None
+        f["refunded"] = (n["outcome"] or {}).get("refunded_total", 0) if n and n.get("outcome") else 0
+        f["merchant"] = db.get("merchants", f["merchant_id"]) if f["merchant_id"] else None
+        if f["status"] == "NOT_ON_NETWORK" and f["selected"] and c.get("certificate_sha256"):
+            f["email_draft"] = letters.offline_email(c, f)
+    notified = [f for f in fs if f["notice_id"]]
+    c["findings"] = fs
+    c["totals"] = {
+        "found": len([f for f in fs if f["kind"] in ("SUBSCRIPTION", "INVOICE")]),
+        "notified": len(notified), "closed": len([f for f in notified if f["status"] == "CLOSED"]),
+        "owed_back": round(sum(f["owed_back"] or 0 for f in fs if f["selected"]), 2),
+        "refunded": round(sum(f["refunded"] for f in fs), 2),
+        "monthly_stopped": round(sum(f["typical_amount"] or 0 for f in fs if f["status"] == "CLOSED" and f["kind"] == "SUBSCRIPTION"), 2),
+    }
     return c
 
 
-class ContractPatch(BaseModel):
-    freelancer_gstin: str | None = None
-    lut_arn: str | None = None
-    sac_code: str | None = None
-    title: str | None = None
-    client_name: str | None = None
-    client_email: str | None = None
-    freelancer_name: str | None = None
-    currency: str | None = None
-    total_amount: float | None = None
+class CasePatch(BaseModel):
+    deceased_name: str | None = None
+    deceased_email: str | None = None
+    date_of_birth: str | None = None
+    date_of_death: str | None = None
+    place_of_death: str | None = None
+    registration_number: str | None = None
+    issuing_authority: str | None = None
+    language: str | None = None
 
 
-@app.patch("/api/contracts/{cid}")
-def patch_contract(cid: str, body: ContractPatch):
-    db.get("contracts", cid) or _404("contract")
-    if any(m["invoice_id"] for m in db.query("SELECT invoice_id FROM milestones WHERE contract_id=?", (cid,))) and body.currency:
-        raise HTTPException(409, "Currency is locked once an invoice exists")
+@app.patch("/api/cases/{cid}")
+def patch_case(cid: str, body: CasePatch):
+    c = db.get("cases", cid) or _404("case")
+    if c["status"] in ("NOTIFIED", "CLOSED") and any(v is not None for k, v in body.model_dump().items() if k != "language"):
+        raise HTTPException(409, "Notices have been sent; details are locked")
     vals = {k: v for k, v in body.model_dump().items() if v is not None}
-    db.update("contracts", cid, vals)
-    db.audit("human", "EDITED contract", None, {"contract_id": cid, **vals})
-    return get_contract(cid)
+    db.update("cases", cid, vals)
+    db.audit("family", "EDITED case", cid, vals)
+    return _reverify(cid)
 
 
-@app.post("/api/contracts/{cid}/confirm")
-def confirm_contract(cid: str):
-    c = get_contract(cid)
-    if not c["client_email"]:
-        raise HTTPException(400, "Add the client's email first - PayPal needs it to send invoices")
-    for m in c["milestones"]:
-        if m["status"] == "DRAFT":
-            db.update("milestones", m["id"], {"status": "CONFIRMED", "updated_at": db.now()})
-    db.audit("human", "CONFIRMED milestones", None, {"contract_id": cid})
-    return get_contract(cid)
-
-
-@app.delete("/api/contracts/{cid}")
-def delete_contract(cid: str):
-    c = get_contract(cid)
-    if any(m["invoice_id"] for m in c["milestones"]):
-        raise HTTPException(409, "Contract has PayPal invoices; it can't be deleted")
-    db.conn().execute("DELETE FROM milestones WHERE contract_id=?", (cid,))
-    db.conn().execute("DELETE FROM contracts WHERE id=?", (cid,))
-    db.conn().commit()
-    return {"ok": True}
-
-
-# ----------------------------------------------------------------------------- milestones
-class MilestonePatch(BaseModel):
-    name: str | None = None
-    amount: float | None = None
-    due_date: str | None = None
-    acceptance_criteria: list[str] | None = None
-
-
-@app.get("/api/milestones/{mid}")
-def get_milestone(mid: str):
-    ms = db.get("milestones", mid) or _404("milestone")
-    c = db.get("contracts", ms["contract_id"])
-    c.pop("raw_text", None)
-    return {"milestone": ms, "contract": c, "pending": [a for a in actions("PENDING") if a["milestone_id"] == mid]}
-
-
-@app.patch("/api/milestones/{mid}")
-def patch_milestone(mid: str, body: MilestonePatch):
-    ms = db.get("milestones", mid) or _404("milestone")
-    if ms["invoice_id"]:
-        raise HTTPException(409, "Milestone already invoiced; edits are locked")
-    vals = {k: v for k, v in body.model_dump().items() if v is not None}
-    db.update("milestones", mid, {**vals, "updated_at": db.now()})
-    db.audit("human", "EDITED milestone", mid, vals)
-    return db.get("milestones", mid)
-
-
-@app.post("/api/milestones/{mid}/deliverable")
-async def submit_deliverable(mid: str, kind: str = Form("text"), value: str = Form(""), file: UploadFile | None = File(None)):
-    ms = db.get("milestones", mid) or _404("milestone")
-    if ms["status"] in ("DRAFT",):
-        raise HTTPException(400, "Confirm the contract's milestones first")
-    if ms["invoice_id"]:
-        raise HTTPException(409, "Already invoiced")
-    data, fname = (await file.read(), file.filename) if file is not None and file.filename else (None, None)
-    if data is not None:
-        kind = "file"
-    return await asyncio.to_thread(_verify, ms, kind, value, data, fname)
-
-
-def _verify(ms: dict, kind: str, value: str, data: bytes | None = None, fname: str | None = None) -> dict:
-    db.update("milestones", ms["id"], {"status": "SUBMITTED", "updated_at": db.now()})
-    evidence_text = agents_proof.gather_evidence(kind, value, data, fname)
-    db.audit("human", "SUBMITTED deliverable", ms["id"], {"kind": kind, "label": fname or value[:120]})
-    report, engine = agents_proof.check(ms["acceptance_criteria"] or [], evidence_text, ms["name"])
-    report["engine"] = engine
-    status = "VERIFIED" if report["score"] >= pp.PROOF_THRESHOLD else "SUBMITTED"
-    db.update("milestones", ms["id"], {
-        "proof_report": report, "proof_score": report["score"], "status": status, "updated_at": db.now(),
-        "deliverable": {"kind": kind, "value": value[:500], "label": fname or value[:120], "excerpt": evidence_text[:3000]},
-    })
-    db.audit("proof_agent", f"VERIFIED deliverable: {int(report['score'] * 100)}%", ms["id"],
-             {"engine": engine, "verdicts": [c["verdict"] for c in report["criteria"]]})
-    return db.get("milestones", ms["id"])
-
-
-class InvoiceProposal(BaseModel):
-    override_reason: str | None = None
-
-
-@app.post("/api/milestones/{mid}/propose-invoice")
-def propose_invoice(mid: str, body: InvoiceProposal | None = None):
-    ms = db.get("milestones", mid) or _404("milestone")
-    if ms["status"] not in ("VERIFIED", "SUBMITTED", "CONFIRMED", "PENDING_APPROVAL"):
-        raise HTTPException(400, f"Milestone is {ms['status']}")
-    override = body.override_reason if body else None
-    params = pp.build_invoice_params(ms)
-    checks = pp.policy_checks(ms, params, override)
-    rationale = (f"Proof score {int((ms.get('proof_score') or 0) * 100)}%. "
-                 + ("All checks pass." if all(c["passed"] for c in checks) else "Some policy checks fail - approval will be blocked."))
-    action = pp.propose(mid, "create_invoice", params, rationale, "paypal_agent", checks)
-    db.update("milestones", mid, {"status": "PENDING_APPROVAL", "updated_at": db.now()})
-    return action
-
-
-@app.post("/api/milestones/{mid}/propose-reminder")
-def propose_reminder(mid: str):
-    ms = db.get("milestones", mid) or _404("milestone")
-    if ms["status"] != "INVOICED":
-        raise HTTPException(400, "Only unpaid invoices can get reminders")
-    return agents_ops.propose_reminder(ms)
-
-
-@app.get("/api/milestones/{mid}/evidence.pdf")
-def evidence_pdf(mid: str):
-    db.get("milestones", mid) or _404("milestone")
-    return Response(evidence.build(mid), media_type="application/pdf",
-                    headers={"Content-Disposition": f'inline; filename="proofpay-evidence-{mid}.pdf"'})
-
-
-# ----------------------------------------------------------------------------- approvals
-@app.get("/api/actions")
-def actions(status: str | None = None):
-    if status:
-        rows = db.query("SELECT * FROM pending_actions WHERE status=? ORDER BY created_at DESC", (status,))
+@app.post("/api/cases/{cid}/certificate")
+async def upload_certificate(cid: str, file: UploadFile | None = File(None), use_specimen: str = Form("")):
+    db.get("cases", cid) or _404("case")
+    if use_specimen:
+        data, mime = seed.ensure_specimen(), "image/png"
+    elif file is not None and file.filename:
+        data, mime = await file.read(), file.content_type or "image/png"
     else:
-        rows = db.query("SELECT * FROM pending_actions ORDER BY created_at DESC LIMIT 100")
+        raise HTTPException(400, "Upload a photo or scan of the certificate")
+    if len(data) > 12_000_000:
+        raise HTTPException(413, "Please upload a file under 12 MB")
+    ext, engine = await asyncio.to_thread(certificate.extract, data, mime)
+    digest = certificate.sha256(data)
+    del data  # the image is never stored; only its fingerprint and the extracted fields
+    vals = {"certificate_sha256": digest, "certificate_deleted_at": db.now(),
+            "extraction": {**ext, "engine": engine}, "certificate_language": ext.get("language"),
+            "deceased_name": ext.get("full_name") or None, "date_of_birth": ext.get("date_of_birth"),
+            "date_of_death": ext.get("date_of_death"), "place_of_death": ext.get("place_of_death"),
+            "registration_number": ext.get("registration_number"), "issuing_authority": ext.get("issuing_authority"),
+            "country": ext.get("country")}
+    db.update("cases", cid, {k: v for k, v in vals.items() if v is not None})
+    db.audit("certificate_agent", "READ certificate", cid, {"engine": engine, "sha256": digest, "image_stored": False})
+    return _reverify(cid)
+
+
+def _reverify(cid: str) -> dict:
+    c = db.get("cases", cid)
+    summary = db.kv_get(f"activity:{cid}")
+    import json as _json
+    v = certificate.verify(c, _json.loads(summary) if summary else None)
+    st = c["status"] if c["status"] in ("NOTIFIED", "CLOSED") else ("VERIFIED" if v["score"] >= merchant.MIN_SCORE and not v["blocking"] else "DRAFT")
+    db.update("cases", cid, {"verification": v, "status": st})
+    return get_case(cid)
+
+
+@app.post("/api/cases/{cid}/activity")
+async def upload_activity(cid: str, file: UploadFile | None = File(None), use_sample: str = Form("")):
+    c = db.get("cases", cid) or _404("case")
+    if not c.get("date_of_death"):
+        raise HTTPException(400, "Add the date of death first (from the certificate)")
+    if c["status"] in ("NOTIFIED", "CLOSED"):
+        raise HTTPException(409, "Notices have already been sent")
+    if use_sample:
+        raw = (db.kv_get("sample_activity_csv") or "").encode()
+    elif file is not None and file.filename:
+        raw = await file.read()
+    else:
+        raise HTTPException(400, "Upload the PayPal activity export (CSV)")
+    rows = activity.parse(raw)
+    if not rows:
+        raise HTTPException(400, "That file doesn't look like a PayPal activity export")
+    result = activity.analyse(rows, c["date_of_death"])
+    if not c.get("deceased_email") and result["account_holder_email"]:
+        db.update("cases", cid, {"deceased_email": result["account_holder_email"]})
+    import json as _json
+    db.kv_set(f"activity:{cid}", _json.dumps({k: result[k] for k in ("account_holder_email", "account_holder", "manual_payments_after_death", "rows", "period")}))
+    db.conn().execute("DELETE FROM findings WHERE case_id=?", (cid,))
+    db.conn().commit()
+    by_email = {m["paypal_email"].lower(): m for m in db.query("SELECT * FROM merchants")}
+    for f in result["findings"]:
+        f.pop("last_date", None)
+        m = by_email.get((f["merchant_email"] or "").lower())
+        status = "FOUND" if m or f["kind"] not in ("SUBSCRIPTION", "INVOICE") else "NOT_ON_NETWORK"
+        db.insert("findings", {"id": db.new_id("fnd"), "case_id": cid, **f, "recurring": int(f["recurring"]),
+                               "merchant_id": m["id"] if m else None, "status": status})
+    db.audit("activity_agent", "READ activity export", cid, {"rows": result["rows"], "found": len(result["findings"])})
+    return _reverify(cid)
+
+
+class FindingPatch(BaseModel):
+    selected: bool
+
+
+@app.patch("/api/findings/{fid}")
+def patch_finding(fid: str, body: FindingPatch):
+    f = db.get("findings", fid) or _404("finding")
+    if f["notice_id"]:
+        raise HTTPException(409, "Already notified")
+    db.update("findings", fid, {"selected": int(body.selected)})
+    return get_case(f["case_id"])
+
+
+@app.post("/api/cases/{cid}/notify")
+def notify(cid: str):
+    c = get_case(cid)
+    v = c.get("verification") or {}
+    if v.get("score", 0) < merchant.MIN_SCORE or v.get("blocking"):
+        raise HTTPException(400, "Verification has to pass before anyone is told: " + "; ".join(v.get("blocking") or ["score too low"]))
+    sent = []
+    for f in c["findings"]:
+        if not f["selected"] or f["notice_id"] or not f["merchant_id"]:
+            continue
+        m = db.get("merchants", f["merchant_id"])
+        nid = db.new_id("ntc")
+        body = notices.build(c, f, m, nid)
+        db.insert("notices", {"id": nid, "case_id": cid, "merchant_id": m["id"], "payload": body,
+                              "signature": notices.sign(body), "status": "SENT", "created_at": db.now()})
+        db.update("findings", f["id"], {"notice_id": nid, "status": "NOTIFIED"})
+        db.audit("hub", "SIGNED and SENT notice", nid, {"merchant": m["name"], "case": cid})
+        sent.append(nid)
+    db.update("cases", cid, {"status": "NOTIFIED"})
+    background = os.getenv("AFTERWORD_SYNC_MERCHANTS") != "1"
+    for nid in sent:  # each merchant's agent receives independently
+        merchant.receive(nid, background=background)
+    return get_case(cid)
+
+
+@app.get("/api/cases/{cid}/letter")
+def closure_letter(cid: str, language: str | None = None):
+    c = get_case(cid)
+    if language:
+        c["language"] = language
+    text = letters.family_closure(c, c["findings"])
+    db.update("cases", cid, {"letter": text})
+    return {"language": c.get("language") or "en", "letter": text}
+
+
+@app.get("/api/cases/{cid}/record.pdf")
+def record_pdf(cid: str):
+    c = get_case(cid)
+    return Response(closure.build(c), media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="afterword-record-{cid}.pdf"'})
+
+
+# =============================================================================== merchant side
+@app.get("/api/merchants")
+def merchants():
+    out = db.query("SELECT * FROM merchants ORDER BY name")
+    for m in out:
+        m["open"] = db.query("SELECT COUNT(*) AS n FROM notices WHERE merchant_id=? AND status IN ('RECEIVED','IN_REVIEW','ACTIONED')", (m["id"],))[0]["n"]
+    return out
+
+
+class MerchantPatch(BaseModel):
+    auto_close: bool | None = None
+    auto_refund_cap: float | None = None
+
+
+@app.patch("/api/merchants/{mid}")
+def patch_merchant(mid: str, body: MerchantPatch):
+    db.get("merchants", mid) or _404("merchant")
+    vals = {k: (int(v) if isinstance(v, bool) else v) for k, v in body.model_dump().items() if v is not None}
+    db.update("merchants", mid, vals)
+    db.audit("merchant_admin", "CHANGED auto-close rule", mid, vals)
+    return db.get("merchants", mid)
+
+
+@app.get("/api/merchant/notices")
+def merchant_notices(merchant_id: str | None = None):
+    sql = """SELECT n.id, n.status, n.created_at, n.received_at, n.closed_at, n.review, n.outcome, n.payload,
+                    m.name AS merchant_name, m.id AS merchant_id, m.auto_close
+             FROM notices n JOIN merchants m ON m.id = n.merchant_id"""
+    rows = db.query(sql + (" WHERE m.id=?" if merchant_id else "") + " ORDER BY n.created_at DESC", (merchant_id,) if merchant_id else ())
+    out = []
     for r in rows:
-        ms = db.get("milestones", r["milestone_id"]) or {}
-        c = db.get("contracts", ms.get("contract_id")) or {}
-        r["milestone_name"], r["contract_title"], r["client_name"] = ms.get("name"), c.get("title"), c.get("client_name")
-    return rows
+        p = r.pop("payload")
+        r["deceased"] = p["deceased"]["name"]
+        r["date_of_death"] = p["deceased"]["date_of_death"]
+        r["claimant"] = f"{p['claimant']['name']} ({p['claimant']['relationship']})"
+        r["score"] = p["verification"]["score"]
+        r["refund_due"] = (r.pop("review") or {}).get("refund_total", 0)
+        r["refunded"] = (r.pop("outcome") or {}).get("refunded_total", 0)
+        r["pending"] = db.query("SELECT COUNT(*) AS n FROM pending_actions WHERE notice_id=? AND status='PENDING'", (r["id"],))[0]["n"]
+        out.append(r)
+    return out
+
+
+@app.get("/api/merchant/notices/{nid}")
+def merchant_notice(nid: str):
+    n = db.get("notices", nid) or _404("notice")
+    n["merchant"] = db.get("merchants", n["merchant_id"])
+    n["signature_valid"] = notices.verify(n["payload"], n["signature"])
+    n["actions"] = db.query("SELECT * FROM pending_actions WHERE notice_id=? ORDER BY created_at", (nid,))
+    return n
+
+
+class Decision(BaseModel):
+    reason: str = ""
+
+
+@app.post("/api/merchant/notices/{nid}/approve-all")
+def approve_all(nid: str):
+    db.get("notices", nid) or _404("notice")
+    return merchant.approve_all(nid, "human (merchant support)")
 
 
 @app.post("/api/actions/{aid}/approve")
 def approve(aid: str):
     try:
-        return pp.approve(aid, "human")
+        a = pp.approve(aid, "human (merchant support)")
     except (PermissionError, ValueError) as e:
         raise HTTPException(409, str(e)) from e
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"PayPal call failed: {e}") from e
-
-
-class Rejection(BaseModel):
-    reason: str = ""
+    merchant.finalize(a["notice_id"])
+    return a
 
 
 @app.post("/api/actions/{aid}/reject")
-def reject(aid: str, body: Rejection | None = None):
+def reject(aid: str, body: Decision | None = None):
     try:
-        return pp.reject(aid, "human", body.reason if body else "")
+        a = pp.reject(aid, "human (merchant support)", body.reason if body else "")
     except ValueError as e:
         raise HTTPException(409, str(e)) from e
+    merchant.finalize(a["notice_id"])
+    return a
 
 
-# ----------------------------------------------------------------------------- ledger, sync, audit
-@app.get("/api/ledger")
-def ledger():
-    rows = db.query("""SELECT m.*, c.title AS contract_title, c.client_name, c.client_email, c.currency, c.freelancer_name
-                       FROM milestones m JOIN contracts c ON c.id = m.contract_id ORDER BY c.created_at DESC, c.id, m.seq""")
-    for r in rows:
-        r["days_outstanding"] = agents_ops.days_since(r["sent_at"]) if r["status"] == "INVOICED" else None
-        r.pop("deliverable", None)
-    return rows
-
-
-@app.post("/api/sync")
-def sync():
-    return {"changed": pp.sync_statuses()}
-
-
-@app.post("/api/mock/pay/{invoice_id}")
-def mock_pay(invoice_id: str):
-    try:
-        pp.mock_pay(invoice_id)
-    except PermissionError as e:
-        raise HTTPException(400, str(e)) from e
-    return {"changed": pp.sync_statuses()}
+# =============================================================================== audit + demo
+@app.get("/api/audit")
+def audit(limit: int = 300):
+    return db.query("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,))
 
 
 @app.get("/api/audit/verify")
@@ -309,60 +333,26 @@ def audit_verify():
     return db.verify_audit_chain()
 
 
-@app.get("/api/audit")
-def audit(limit: int = 200):
-    return db.query("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,))
+@app.get("/api/demo/specimen.png")
+def specimen():
+    return Response(seed.ensure_specimen(), media_type="image/png")
 
 
-class Chat(BaseModel):
-    message: str
-
-
-@app.post("/api/copilot")
-async def copilot(body: Chat):
-    return await asyncio.to_thread(agents_ops.copilot, body.message)
-
-
-# ----------------------------------------------------------------------------- demo data
-def seed_demo() -> dict:
-    """Builds a realistic ledger by driving the real code paths (extract -> verify -> approve)."""
-    override = os.getenv("DEMO_CLIENT_EMAIL") or None
-    brand = _ingest_contract((SAMPLES / "contract_brand_identity.txt").read_text(), override)
-    web = _ingest_contract((SAMPLES / "contract_web_app.txt").read_text(), override)
-    _ingest_contract((SAMPLES / "contract_translation.txt").read_text(), override)
-    # fictional registration details so the export invoice wording is visible in the demo
-    db.update("contracts", brand["id"], {"freelancer_gstin": "33AAAPZ1234C1Z5", "lut_arn": "AD330326000123X"})
-    confirm_contract(brand["id"])
-    confirm_contract(web["id"])
-    b1 = brand["milestones"][0]
-    _verify(db.get("milestones", b1["id"]), "text", (SAMPLES / "deliverable_moodboards.txt").read_text())
-    act = propose_invoice(b1["id"], InvoiceProposal())
-    try:
-        pp.approve(act["id"], "human (demo seed)")
-    except Exception:  # noqa: BLE001
-        pass
-    w1 = web["milestones"][0]
-    _verify(db.get("milestones", w1["id"]), "text", (SAMPLES / "deliverable_backend_api.txt").read_text())
-    return {"ok": True}
-
-
-@app.post("/api/demo/seed")
-async def demo_seed():
-    return await asyncio.to_thread(seed_demo)
+@app.get("/api/demo/sample-activity.csv")
+def sample_csv():
+    return PlainTextResponse(db.kv_get("sample_activity_csv") or "", media_type="text/csv",
+                             headers={"Content-Disposition": 'attachment; filename="paypal-activity-sample.csv"'})
 
 
 @app.post("/api/demo/reset")
 def demo_reset():
     db.reset()
-    try:
-        db.conn().execute("DELETE FROM mock_invoices")
-        db.conn().commit()
-    except Exception:  # noqa: BLE001
-        pass
+    pp._transport = None
+    seed.seed_demo()
     return {"ok": True}
 
 
-# ----------------------------------------------------------------------------- UI
+# =============================================================================== UI
 if DIST.exists():
     app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
 

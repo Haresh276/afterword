@@ -1,83 +1,86 @@
-"""SQLite persistence for ProofPay. Plain sqlite3, JSON columns, zero setup."""
+"""SQLite persistence for Afterword. Plain sqlite3, JSON columns, zero setup.
+
+Two worlds share one database in this demo:
+  * the family side (cases, findings, notices sent), and
+  * the merchant side (merchants, their customer records, notices received, pending PayPal actions).
+In production these are separate systems that only exchange signed notices.
+"""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
 import threading
 import uuid
-import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-DB_PATH = os.getenv("PROOFPAY_DB", os.path.join(os.path.dirname(__file__), "..", "proofpay.db"))
-_lock = threading.Lock()
+DB_PATH = os.getenv("AFTERWORD_DB", os.path.join(os.path.dirname(__file__), "..", "afterword.db"))
+_lock = threading.RLock()
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS contracts (
+-- ---------------------------------------------------------------- family side
+CREATE TABLE IF NOT EXISTS cases (
     id TEXT PRIMARY KEY,
-    title TEXT,
-    freelancer_name TEXT,
-    freelancer_email TEXT,
-    client_name TEXT,
-    client_email TEXT,
-    currency TEXT,
-    total_amount REAL,
-    raw_text TEXT,
-    summary TEXT,
-    risk_flags TEXT,               -- JSON list[str]
-    freelancer_gstin TEXT,
-    lut_arn TEXT,
-    sac_code TEXT,
-    engine TEXT,
+    claimant_name TEXT, claimant_email TEXT, relationship TEXT, language TEXT,
+    deceased_name TEXT, deceased_email TEXT, date_of_birth TEXT, date_of_death TEXT,
+    place_of_death TEXT, registration_number TEXT, issuing_authority TEXT, country TEXT,
+    certificate_sha256 TEXT, certificate_language TEXT, certificate_deleted_at TEXT,
+    extraction TEXT,          -- JSON: raw fields + engine
+    verification TEXT,        -- JSON: {score, checks:[{check,passed,detail}]}
+    status TEXT,              -- DRAFT | VERIFIED | NOTIFIED | CLOSED
+    letter TEXT,              -- final closure letter (family's language)
     created_at TEXT
 );
-CREATE TABLE IF NOT EXISTS milestones (
-    id TEXT PRIMARY KEY,
-    contract_id TEXT,
-    seq INTEGER,
-    name TEXT,
-    amount REAL,
-    due_date TEXT,
-    acceptance_criteria TEXT,      -- JSON list[str]
-    status TEXT,                   -- DRAFT|CONFIRMED|SUBMITTED|VERIFIED|PENDING_APPROVAL|INVOICED|PAID|CANCELLED
-    proof_score REAL,
-    proof_report TEXT,             -- JSON
-    deliverable TEXT,              -- JSON {kind, value, excerpt}
-    invoice_id TEXT,
-    invoice_url TEXT,
-    invoice_status TEXT,
-    sent_at TEXT,
-    paid_at TEXT,
-    reminders_sent INTEGER DEFAULT 0,
-    realisation_deadline TEXT,     -- GST: forex must be realised within 1 year of invoice
-    updated_at TEXT
+CREATE TABLE IF NOT EXISTS findings (
+    id TEXT PRIMARY KEY, case_id TEXT,
+    merchant_name TEXT, merchant_email TEXT, merchant_id TEXT,
+    kind TEXT,                -- SUBSCRIPTION | INVOICE | ONE_OFF | PERSONAL
+    recurring INTEGER, cadence TEXT, typical_amount REAL, currency TEXT,
+    references_json TEXT,     -- JSON {subscription_ids, transaction_ids, invoice_ids}
+    charges_after_death TEXT, -- JSON [{date, amount, transaction_id}]
+    owed_back REAL, reason TEXT, selected INTEGER,
+    notice_id TEXT, status TEXT  -- FOUND | NOTIFIED | RECEIVED | CLOSED | NOT_ON_NETWORK
+);
+-- ---------------------------------------------------------------- merchant side
+CREATE TABLE IF NOT EXISTS merchants (
+    id TEXT PRIMARY KEY, name TEXT, category TEXT, support_email TEXT,
+    paypal_email TEXT, auto_close INTEGER, auto_refund_cap REAL, accent TEXT
+);
+CREATE TABLE IF NOT EXISTS merchant_customers (
+    id TEXT PRIMARY KEY, merchant_id TEXT, customer_name TEXT, email TEXT,
+    paypal_subscription_id TEXT, plan_name TEXT, amount REAL, currency TEXT, status TEXT
+);
+CREATE TABLE IF NOT EXISTS merchant_invoices (
+    id TEXT PRIMARY KEY, merchant_id TEXT, email TEXT, paypal_invoice_id TEXT,
+    description TEXT, amount REAL, currency TEXT, status TEXT
+);
+CREATE TABLE IF NOT EXISTS notices (
+    id TEXT PRIMARY KEY, case_id TEXT, merchant_id TEXT,
+    payload TEXT,             -- JSON: the signed notice body
+    signature TEXT,
+    status TEXT,              -- SENT | RECEIVED | IN_REVIEW | ACTIONED | CLOSED | REJECTED
+    review TEXT,              -- JSON: merchant-side checks + matches
+    outcome TEXT,             -- JSON: {cancelled:[], refunded:[{id, amount}], invoices_cancelled:[], refunded_total}
+    reply TEXT,               -- merchant's letter to the family
+    received_at TEXT, closed_at TEXT, created_at TEXT
 );
 CREATE TABLE IF NOT EXISTS pending_actions (
-    id TEXT PRIMARY KEY,
-    milestone_id TEXT,
-    tool TEXT,
-    params TEXT,                   -- JSON
-    rationale TEXT,
-    policy_checks TEXT,            -- JSON list[{check, passed, detail}]
-    status TEXT,                   -- PENDING|APPROVED|REJECTED|EXECUTED|FAILED
-    proposed_by TEXT,
-    decided_by TEXT,
-    result TEXT,
-    created_at TEXT,
-    decided_at TEXT,
-    params_hash TEXT,
-    expires_at TEXT
+    id TEXT PRIMARY KEY, notice_id TEXT, merchant_id TEXT,
+    tool TEXT, params TEXT, rationale TEXT, policy_checks TEXT,
+    status TEXT,              -- PENDING | APPROVED | EXECUTED | REJECTED | FAILED | EXPIRED
+    proposed_by TEXT, decided_by TEXT, result TEXT,
+    params_hash TEXT, expires_at TEXT, amount REAL,
+    created_at TEXT, decided_at TEXT
 );
+CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
+-- ---------------------------------------------------------------- shared audit trail
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts TEXT,
-    actor TEXT,                    -- human|contract_agent|proof_agent|paypal_agent|copilot|system
-    action TEXT,
-    milestone_id TEXT,
-    detail TEXT,                   -- JSON
+    ts TEXT, actor TEXT, action TEXT, ref TEXT, detail TEXT,
     prev_hash TEXT,
-    hash TEXT                      -- sha256 chain: tampering with any row breaks every later hash
+    hash TEXT                 -- sha256 chain: editing any row breaks every later hash
 );
 CREATE TRIGGER IF NOT EXISTS audit_append_only_u BEFORE UPDATE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
@@ -85,7 +88,9 @@ CREATE TRIGGER IF NOT EXISTS audit_append_only_d BEFORE DELETE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 """
 
-JSON_COLS = {"risk_flags", "acceptance_criteria", "proof_report", "deliverable", "params", "policy_checks", "detail"}
+JSON_COLS = {"extraction", "verification", "references_json", "charges_after_death", "payload",
+             "review", "outcome", "params", "policy_checks", "detail"}
+TABLES = ("cases", "findings", "merchants", "merchant_customers", "merchant_invoices", "notices", "pending_actions")
 
 
 def now() -> str:
@@ -100,31 +105,27 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:10]}"
 
 
-def connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
 _conn: sqlite3.Connection | None = None
 
 
 def conn() -> sqlite3.Connection:
     global _conn
     if _conn is None:
-        _conn = connect()
+        _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        _conn.row_factory = sqlite3.Row
         _conn.executescript(SCHEMA)
         _conn.commit()
     return _conn
 
 
 def reset() -> None:
-    global _conn
     with _lock:
         c = conn()
-        for t in ("contracts", "milestones", "pending_actions"):
+        for t in TABLES:
             c.execute(f"DELETE FROM {t}")
         c.execute("DROP TABLE IF EXISTS audit_log")  # demo reset only; triggers go with the table
+        for t in ("mock_subscriptions", "mock_captures", "mock_invoices", "mock_refunds"):
+            c.execute(f"DROP TABLE IF EXISTS {t}")
         c.executescript(SCHEMA)
         c.commit()
 
@@ -143,55 +144,63 @@ def _decode(row: sqlite3.Row | None) -> dict | None:
 
 
 def _encode(values: dict) -> dict:
-    out = {}
-    for k, v in values.items():
-        out[k] = json.dumps(v) if k in JSON_COLS and v is not None and not isinstance(v, str) else v
-    return out
+    return {k: (json.dumps(v, default=str) if k in JSON_COLS and v is not None and not isinstance(v, str) else v)
+            for k, v in values.items()}
 
 
 def insert(table: str, values: dict) -> dict:
-    values = _encode(values)
-    cols = ", ".join(values)
-    qs = ", ".join("?" for _ in values)
+    enc = _encode(values)
     with _lock:
-        conn().execute(f"INSERT INTO {table} ({cols}) VALUES ({qs})", list(values.values()))
+        conn().execute(f"INSERT INTO {table} ({', '.join(enc)}) VALUES ({', '.join('?' for _ in enc)})", list(enc.values()))
         conn().commit()
     return values
 
 
 def update(table: str, row_id: Any, values: dict) -> None:
-    values = _encode(values)
-    sets = ", ".join(f"{k} = ?" for k in values)
+    enc = _encode(values)
     with _lock:
-        conn().execute(f"UPDATE {table} SET {sets} WHERE id = ?", [*values.values(), row_id])
+        conn().execute(f"UPDATE {table} SET {', '.join(f'{k} = ?' for k in enc)} WHERE id = ?", [*enc.values(), row_id])
         conn().commit()
 
 
 def get(table: str, row_id: Any) -> dict | None:
-    return _decode(conn().execute(f"SELECT * FROM {table} WHERE id = ?", (row_id,)).fetchone())
+    with _lock:
+        return _decode(conn().execute(f"SELECT * FROM {table} WHERE id = ?", (row_id,)).fetchone())
 
 
 def query(sql: str, params: tuple = ()) -> list[dict]:
-    return [_decode(r) for r in conn().execute(sql, params).fetchall()]
+    with _lock:
+        return [_decode(r) for r in conn().execute(sql, params).fetchall()]
 
 
+def kv_get(k: str) -> str | None:
+    r = query("SELECT v FROM kv WHERE k=?", (k,))
+    return r[0]["v"] if r else None
+
+
+def kv_set(k: str, v: str) -> None:
+    with _lock:
+        conn().execute("INSERT OR REPLACE INTO kv (k, v) VALUES (?, ?)", (k, v))
+        conn().commit()
+
+
+# ---------------------------------------------------------------- hash-chained audit
 GENESIS = "0" * 64
 
 
-def _row_hash(prev: str, ts: str, actor: str, action: str, milestone_id: str | None, detail: str | None) -> str:
-    payload = json.dumps([prev, ts, actor, action, milestone_id, detail], separators=(",", ":"))
-    return hashlib.sha256(payload.encode()).hexdigest()
+def _row_hash(prev: str, ts: str, actor: str, action: str, ref: str | None, detail: str | None) -> str:
+    return hashlib.sha256(json.dumps([prev, ts, actor, action, ref, detail], separators=(",", ":")).encode()).hexdigest()
 
 
-def audit(actor: str, action: str, milestone_id: str | None = None, detail: Any = None) -> None:
+def audit(actor: str, action: str, ref: str | None = None, detail: Any = None) -> None:
     with _lock:
         last = conn().execute("SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1").fetchone()
-        prev = (last["hash"] if last and last["hash"] else GENESIS)
+        prev = last["hash"] if last and last["hash"] else GENESIS
         ts = now()
         d = json.dumps(detail, default=str, sort_keys=True) if detail is not None else None
         conn().execute(
-            "INSERT INTO audit_log (ts, actor, action, milestone_id, detail, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (ts, actor, action, milestone_id, d, prev, _row_hash(prev, ts, actor, action, milestone_id, d)),
+            "INSERT INTO audit_log (ts, actor, action, ref, detail, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (ts, actor, action, ref, d, prev, _row_hash(prev, ts, actor, action, ref, d)),
         )
         conn().commit()
 
@@ -199,8 +208,10 @@ def audit(actor: str, action: str, milestone_id: str | None = None, detail: Any 
 def verify_audit_chain() -> dict:
     """Recompute every hash. Any edited, inserted or deleted row breaks the chain from that point."""
     prev, n = GENESIS, 0
-    for r in conn().execute("SELECT * FROM audit_log ORDER BY id").fetchall():
-        expected = _row_hash(prev, r["ts"], r["actor"], r["action"], r["milestone_id"], r["detail"])
+    with _lock:
+        rows = conn().execute("SELECT * FROM audit_log ORDER BY id").fetchall()
+    for r in rows:
+        expected = _row_hash(prev, r["ts"], r["actor"], r["action"], r["ref"], r["detail"])
         if r["prev_hash"] != prev or r["hash"] != expected:
             return {"ok": False, "rows_checked": n, "broken_at_id": r["id"], "head": prev}
         prev, n = r["hash"], n + 1

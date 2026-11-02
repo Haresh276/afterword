@@ -62,6 +62,25 @@ def json_call(system: str, user: str, temperature: float = 0.1) -> dict:
     return _extract_json(resp.choices[0].message.content or "{}")
 
 
+def json_call_image(system: str, user: str, image_bytes: bytes, mime: str = "image/png") -> dict:
+    """Multimodal JSON call (Gemini and OpenAI both accept data-URL images on the chat endpoint)."""
+    import base64
+
+    key, _, model = _config()
+    if not key:
+        raise RuntimeError("no LLM configured")
+    url = f"data:{mime};base64,{base64.b64encode(image_bytes).decode()}"
+    resp = client().chat.completions.create(
+        model=model,
+        temperature=0,
+        response_format={"type": "json_object"},
+        messages=[{"role": "system", "content": system},
+                  {"role": "user", "content": [{"type": "text", "text": user},
+                                               {"type": "image_url", "image_url": {"url": url}}]}],
+    )
+    return _extract_json(resp.choices[0].message.content or "{}")
+
+
 def text_call(system: str, user: str, temperature: float = 0.4) -> str:
     key, _, model = _config()
     if not key:

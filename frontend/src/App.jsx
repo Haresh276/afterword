@@ -1,25 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
-import Ledger from './Ledger'
-import Contracts from './Contracts'
-import Approvals from './Approvals'
-import Audit from './Audit'
-import MilestoneDrawer from './MilestoneDrawer'
-import Copilot from './Copilot'
-
-const PAGES = [
-  ['ledger', 'Receivables'],
-  ['contracts', 'Contracts'],
-  ['approvals', 'Approvals'],
-  ['audit', 'Audit trail'],
-]
+import Family from './Family'
+import Merchant from './Merchant'
 
 export default function App() {
-  const [page, setPage] = useState('ledger')
+  const [world, setWorld] = useState(() => (location.hash === '#business' ? 'merchant' : 'family'))
   const [status, setStatus] = useState(null)
-  const [ledger, setLedger] = useState([])
-  const [pending, setPending] = useState([])
-  const [openMs, setOpenMs] = useState(null)
   const [toast, setToast] = useState(null)
 
   const notify = useCallback((msg, err = false) => {
@@ -27,62 +13,34 @@ export default function App() {
     setTimeout(() => setToast(null), err ? 6000 : 3200)
   }, [])
 
-  const refresh = useCallback(async () => {
-    try {
-      const [l, p] = await Promise.all([api.get('/api/ledger'), api.get('/api/actions?status=PENDING')])
-      setLedger(l)
-      setPending(p)
-    } catch (e) {
-      notify(e.message, true)
-    }
-  }, [notify])
-
-  useEffect(() => {
-    api.get('/api/status').then(setStatus).catch(() => {})
-    refresh()
-    const t = setInterval(async () => {
-      try { await api.post('/api/sync') } catch { /* polling */ }
-      refresh()
-    }, 8000)
-    return () => clearInterval(t)
-  }, [refresh])
-
-  const ctx = { ledger, pending, refresh, notify, openMilestone: setOpenMs, status, go: setPage }
+  useEffect(() => { api.get('/api/status').then(setStatus).catch(() => {}) }, [])
+  useEffect(() => { history.replaceState(null, '', world === 'merchant' ? '#business' : '#') }, [world])
 
   return (
-    <div className="shell">
-      <nav className="rail" aria-label="Main">
-        <div className="brand">
-          <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true">
-            <circle cx="16" cy="16" r="13" fill="none" stroke="#fff" strokeWidth="3" />
-            <path d="M10 16.5l4 4 8-9" fill="none" stroke="#f5b301" strokeWidth="3" strokeLinecap="round" />
+    <>
+      <header className="top">
+        <div className="mark">
+          <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+            <path d="M7 24 C12 8, 20 8, 25 24" fill="none" stroke="#2f5d52" strokeWidth="2.6" strokeLinecap="round" />
+            <circle cx="16" cy="9" r="2.4" fill="#2f5d52" />
           </svg>
-          <div><b>ProofPay</b><small>Get paid for proven work</small></div>
+          Afterword
         </div>
-        {PAGES.map(([id, label]) => (
-          <button key={id} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}>
-            {label}
-            {id === 'approvals' && pending.length > 0 && <span className="badge">{pending.length}</span>}
-          </button>
-        ))}
+        <div className="world" role="group" aria-label="Who is using Afterword">
+          <button aria-pressed={world === 'family'} onClick={() => setWorld('family')}>For families</button>
+          <button aria-pressed={world === 'merchant'} onClick={() => setWorld('merchant')}>For businesses</button>
+        </div>
+        <span className="spacer" />
         {status && (
-          <div className="foot">
-            <span><i className="dot" style={{ background: status.paypal_mode === 'sandbox' ? '#3ccf8e' : '#f5b301' }} />
-              PayPal {status.paypal_mode === 'sandbox' ? 'sandbox (live API)' : 'offline simulator'}</span>
-            <span><i className="dot" style={{ background: status.llm_live ? '#3ccf8e' : '#f5b301' }} />
-              AI: {status.llm}</span>
+          <div className="status">
+            <span><i className="dot" style={{ background: status.paypal_mode === 'sandbox' ? '#2f5d52' : '#8f621a' }} />
+              PayPal {status.paypal_mode === 'sandbox' ? 'sandbox' : 'simulator'}</span>
+            <span><i className="dot" style={{ background: status.llm_live ? '#2f5d52' : '#8f621a' }} />{status.llm}</span>
           </div>
         )}
-      </nav>
-      <main>
-        {page === 'ledger' && <Ledger {...ctx} />}
-        {page === 'contracts' && <Contracts {...ctx} />}
-        {page === 'approvals' && <Approvals {...ctx} />}
-        {page === 'audit' && <Audit {...ctx} />}
-      </main>
-      {openMs && <MilestoneDrawer id={openMs} onClose={() => { setOpenMs(null); refresh() }} {...ctx} />}
-      <Copilot refresh={refresh} />
+      </header>
+      {world === 'family' ? <Family notify={notify} /> : <Merchant notify={notify} />}
       {toast && <div role="status" className={`toast ${toast.err ? 'err' : ''}`}>{toast.msg}</div>}
-    </div>
+    </>
   )
 }

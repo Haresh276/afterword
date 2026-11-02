@@ -2,11 +2,11 @@ fastapi==0.*
 uvicorn[standard]
 python-multipart
 pydantic>=2
-httpx
-pypdf
 reportlab
+pillow
+cryptography
 openai
-openai-agents
+requests
 paypal-agent-toolkit==1.11.0
-pytest
 python-dotenv
+pytest
