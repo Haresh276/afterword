@@ -95,6 +95,8 @@ export default function MilestoneDrawer({ id, onClose, notify, refresh, status }
           <ul style={{ margin: 0, paddingLeft: 18 }}>{(m.acceptance_criteria || []).map((x, i) => <li key={i}>{x}</li>)}</ul>
         </div>
 
+        {m.proof_report && <ProofReport report={m.proof_report} fresh={fresh} />}
+
         {canSubmit && (
           <div className="panel stack">
             <h2 style={{ margin: 0 }}>{m.proof_report ? 'Submit updated work' : 'Submit your work'}</h2>
@@ -113,8 +115,6 @@ export default function MilestoneDrawer({ id, onClose, notify, refresh, status }
             </div>
           </div>
         )}
-
-        {m.proof_report && <ProofReport report={m.proof_report} fresh={fresh} />}
 
         {pending.map((a) => <ApprovalCard key={a.id} a={a} onDone={() => { load(); refresh() }} notify={notify} />)}
 
