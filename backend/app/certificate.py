@@ -84,13 +84,31 @@ def verify(case: dict, activity_summary: dict | None = None) -> dict:
         f"died {dod or '?'}" + (f", born {dob}" if dob else ""), critical=True)
     add("Registration number looks valid", bool(re.fullmatch(r"[A-Za-z0-9/\-]{6,40}", case.get("registration_number") or "")),
         case.get("registration_number") or "none")
-    reused = db.query("SELECT id, deceased_name FROM cases WHERE certificate_sha256=? AND id<>?",
-                      (case.get("certificate_sha256") or "-", case["id"]))
-    other = [r for r in reused if not names_match(r["deceased_name"] or "", case.get("deceased_name") or "")]
-    add("Certificate not already used for a different person", not other,
-        f"also used in {other[0]['id']}" if other else "first use", critical=True)
+    # ---- image forensics (computed in memory at upload; only the summary is kept)
+    fx = ext.get("forensics") or {}
+    ela = fx.get("ela") or {}
+    if fx.get("ok") and ela.get("applicable"):
+        strong = ela.get("anomalous") and ela.get("peak_z", 0) > 15
+        where = sorted({round(h["y_frac"] * 100) for h in ela.get("hot_blocks", [])})
+        add("No sign the image was edited after it was taken (error-level analysis)", not ela.get("anomalous"),
+            (f"text near {', '.join(f'{w}%' for w in where[:3])} down the page re-compresses unlike the rest (peak z {ela['peak_z']})"
+             if ela.get("anomalous") else f"consistent compression across the page (peak z {ela.get('peak_z')})"),
+            1.0, critical=bool(strong))
+    elif fx.get("ok"):
+        add("No sign the image was edited after it was taken (error-level analysis)", True,
+            ela.get("reason") or "not applicable", 0.25)
+    editors = (fx.get("metadata") or {}).get("editors") or []
+    if fx.get("ok"):
+        add("No editing software recorded in the file", not editors, ", ".join(editors) or "none recorded", 0.5)
     alterations = ext.get("signs_of_alteration") or []
     add("No visible signs of alteration", not alterations, "; ".join(alterations) or "none seen", 0.5)
+
+    # ---- network check across every case the hub has seen
+    from . import fraud  # local import: fraud uses names_match from this module
+    net = fraud.assess(case["id"]) if case.get("certificate_sha256") else {"flags": [], "links": []}
+    crit = [f for f in net["flags"] if f["critical"]]
+    add("Network check: certificate, registration and claimant not linked to another person",
+        not crit, "; ".join(f["detail"] for f in crit) or f"compared with {net.get('checked_cases', 0)} cases", 1.5, critical=True)
 
     if activity_summary:
         holder_email = (activity_summary.get("account_holder_email") or "").lower()
@@ -109,4 +127,4 @@ def verify(case: dict, activity_summary: dict | None = None) -> dict:
     total = sum(c["weight"] for c in checks)
     score = round(sum(c["weight"] for c in checks if c["passed"]) / total, 3) if total else 0.0
     blocking = [c["check"] for c in checks if c["critical"] and not c["passed"]]
-    return {"score": score, "checks": checks, "blocking": blocking, "is_specimen": bool(ext.get("is_specimen")), "verified_at": db.now()}
+    return {"score": score, "checks": checks, "blocking": blocking, "network": net, "is_specimen": bool(ext.get("is_specimen")), "verified_at": db.now()}

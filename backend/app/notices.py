@@ -18,18 +18,24 @@ from . import db
 PROTOCOL = "afterword/notice@1"
 
 
-def _key() -> Ed25519PrivateKey:
-    pem = db.kv_get("hub_private_key")
+RECEIPT_PROTOCOL = "afterword/closure-receipt@1"
+
+
+def _key(party: str = "hub") -> Ed25519PrivateKey:
+    """Each party has its own Ed25519 key: the hub signs notices, each merchant signs its own receipts.
+    (In this demo they live in one database; in production each merchant keeps its own key.)"""
+    name = "hub_private_key" if party == "hub" else f"key:{party}"
+    pem = db.kv_get(name)
     if not pem:
         k = Ed25519PrivateKey.generate()
         pem = k.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                               serialization.NoEncryption()).decode()
-        db.kv_set("hub_private_key", pem)
+        db.kv_set(name, pem)
     return serialization.load_pem_private_key(pem.encode(), password=None)
 
 
-def public_key_b64() -> str:
-    raw = _key().public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+def public_key_b64(party: str = "hub") -> str:
+    raw = _key(party).public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
     return base64.b64encode(raw).decode()
 
 
@@ -37,13 +43,13 @@ def canonical(body: dict) -> bytes:
     return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
 
 
-def sign(body: dict) -> str:
-    return base64.b64encode(_key().sign(canonical(body))).decode()
+def sign(body: dict, party: str = "hub") -> str:
+    return base64.b64encode(_key(party).sign(canonical(body))).decode()
 
 
-def verify(body: dict, signature: str, public_key: str | None = None) -> bool:
+def verify(body: dict, signature: str, public_key: str | None = None, party: str = "hub") -> bool:
     try:
-        pk = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key or public_key_b64()))
+        pk = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key or public_key_b64(party)))
         pk.verify(base64.b64decode(signature), canonical(body))
         return True
     except Exception:  # noqa: BLE001

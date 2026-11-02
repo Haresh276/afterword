@@ -62,6 +62,8 @@ class _Toolkit:
             if params.get("amount"):
                 body["amount"] = {"value": f"{float(params['amount']):.2f}", "currency_code": params["currency"]}
             return self._rest("POST", f"/v2/payments/captures/{params['capture_id']}/refund", body, request_id)
+        if method == "get_capture":
+            return self._rest("GET", f"/v2/payments/captures/{params['capture_id']}")
         if method == "list_subscription_transactions":
             return self._rest("GET", f"/v1/billing/subscriptions/{params['subscription_id']}/transactions"
                                      f"?start_time={params['start_time']}&end_time={params['end_time']}")
@@ -133,6 +135,11 @@ class _Mock:
             return {"transactions": [{"id": r["id"], "status": r["status"], "time": r["time"],
                                       "amount_with_breakdown": {"gross_amount": {"currency_code": r["currency"], "value": f"{r['amount']:.2f}"}}}
                                      for r in rows]}
+        if method == "get_capture":
+            cap = self._one("SELECT * FROM mock_captures WHERE id=?", (params["capture_id"],))
+            if not cap:
+                return {"name": "RESOURCE_NOT_FOUND"}
+            return {"id": cap["id"], "status": cap["status"], "amount": {"currency_code": cap["currency"], "value": f"{cap['amount']:.2f}"}}
         if method == "cancel_subscription":
             s = self._one("SELECT status FROM mock_subscriptions WHERE id=?", (params["subscription_id"],))
             if not s:

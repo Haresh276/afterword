@@ -35,6 +35,8 @@ def create():
         sys.exit("Set PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET and DEMO_CLIENT_EMAIL in .env first.")
     state = {"subscriptions": {}, "invoices": {}}
     for mid, name, cat, amount, *_rest, kind in MERCHANTS:
+        if kind == "annual":
+            continue  # a renewal due next week needs a year-old charge; that part of the demo stays simulated
         if kind == "sub":
             prod = run("create_product", {"name": f"{name} ({cat})", "type": "SERVICE"})
             plan = run("create_subscription_plan", {

@@ -88,6 +88,7 @@ function Notice({ id, onClose, notify, reload }) {
           <div className="card" style={{ marginTop: 18 }}>
             <h3>Sent to {p.claimant.name}</h3>
             <div className="reply" style={{ marginTop: 8 }}>{n.reply}</div>
+            {n.receipt && <p className="tiny faint" style={{ margin: '10px 0 0' }}>Closure receipt signed with {n.merchant.name}'s Ed25519 key ({n.receipt.protocol}). The Afterword hub then re-read PayPal: {n.confirmation?.items?.map((i) => `${i.what} ${i.paypal_status}`).join(', ')}.</p>}
           </div>
         )}
       </aside>
@@ -100,11 +101,13 @@ export default function Merchant({ notify }) {
   const [sel, setSel] = useState('m_dailyledger')
   const [rows, setRows] = useState([])
   const [open, setOpen] = useState(null)
+  const [stats, setStats] = useState(null)
 
   const reload = useCallback(async () => {
     try {
       setMerchants(await api.get('/api/merchants'))
       if (sel !== 'audit') setRows(await api.get(`/api/merchant/notices${sel === 'all' ? '' : `?merchant_id=${sel}`}`))
+      setStats(sel.startsWith('m_') ? await api.get(`/api/merchants/${sel}/stats`) : null)
     } catch (e) { notify(e.message, true) }
   }, [sel, notify])
   useEffect(() => { reload(); const t = setInterval(reload, 2500); return () => clearInterval(t) }, [reload])
@@ -154,6 +157,15 @@ export default function Merchant({ notify }) {
                 <span className="small faint">Anything else waits for a person.</span>
               </div>
             )}
+            {stats && (
+              <div className="stats">
+                <div><b className="num">{stats.notices}</b><span>notices received</span></div>
+                <div><b className="num">{stats.median_minutes_to_close === null ? '-' : stats.median_minutes_to_close < 1 ? '<1 min' : `${stats.median_minutes_to_close} min`}</b><span>median time to close</span></div>
+                <div><b className="num">{money(stats.refunded)}</b><span>refunded to families</span></div>
+                <div><b className="num">{stats.open}</b><span>waiting on your team</span></div>
+              </div>
+            )}
+            <p className="tiny faint" style={{ margin: '10px 0 0' }}>Your own support agent can read and verify these notices over MCP at <code>/mcp</code> (tools: list_notices, get_notice, verify_notice). It can't move money.</p>
             {rows.length === 0 ? <div className="card" style={{ marginTop: 16 }}><p style={{ margin: 0 }} className="muted">No notices yet. When a family sends one from "For families", it arrives here within seconds.</p></div> : (
               <div className="grid-wrap">
                 <AgGridReact theme={theme} rowData={rows} columnDefs={cols} getRowId={(p) => p.data.id}

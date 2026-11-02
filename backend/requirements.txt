@@ -10,3 +10,4 @@ requests
 paypal-agent-toolkit==1.11.0
 python-dotenv
 pytest
+mcp>=2.3

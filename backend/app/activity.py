@@ -10,7 +10,7 @@ import csv
 import io
 import re
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from statistics import median
 
 AUTOMATIC_TYPES = re.compile(r"subscription|pre-?approved|billing agreement|recurring|automatic", re.I)
@@ -69,20 +69,37 @@ def parse(csv_bytes: bytes) -> list[dict]:
     return rows
 
 
-def _cadence(dates: list[date]) -> str:
-    if len(dates) < 2:
-        return "single"
-    gaps = [(b - a).days for a, b in zip(dates, dates[1:])]
-    g = median(gaps)
-    if 26 <= g <= 35:
-        return "monthly"
-    if 6 <= g <= 8:
-        return "weekly"
-    if 350 <= g <= 380:
-        return "yearly"
-    if 85 <= g <= 95:
-        return "quarterly"
-    return f"every ~{int(g)} days"
+CANONICAL = [(7, "weekly"), (14, "fortnightly"), (30.44, "monthly"), (91.31, "quarterly"), (182.6, "half-yearly"), (365.25, "yearly")]
+
+
+def estimate_period(dates: list[date], titles: list[str]) -> tuple[float | None, str, float]:
+    """Robust period estimate: median inter-arrival gap, snapped to a canonical billing period when
+    within 15%. Confidence falls as the gaps scatter (MAD / median). With one charge, fall back to
+    the item title ('annual', 'monthly')."""
+    if len(dates) >= 2:
+        gaps = [(b - a).days for a, b in zip(dates, dates[1:]) if (b - a).days > 0]
+        if gaps:
+            g = median(gaps)
+            mad = median([abs(x - g) for x in gaps])
+            conf = max(0.0, 1 - mad / g) if g else 0.0
+            for days, label in CANONICAL:
+                if abs(g - days) / days <= 0.15:
+                    return days, label, round(conf, 2)
+            return float(g), f"every ~{int(g)} days", round(conf, 2)
+    text = " ".join(titles).lower()
+    if re.search(r"annual|yearly|12[- ]month|per year|/yr", text):
+        return 365.25, "yearly", 0.6
+    if re.search(r"monthly|per month|/mo", text):
+        return 30.44, "monthly", 0.6
+    return None, "single", 0.0
+
+
+def price_note(paid: list[dict]) -> str | None:
+    amts = [(i["date"], abs(i["gross"])) for i in paid]
+    for (d0, a0), (d1, a1) in zip(amts, amts[1:]):
+        if abs(a1 - a0) > 0.005:
+            return f"price went from {a0:.2f} to {a1:.2f} on {d1.isoformat()}"
+    return None
 
 
 def analyse(rows: list[dict], date_of_death: str) -> dict:
@@ -109,12 +126,16 @@ def analyse(rows: list[dict], date_of_death: str) -> dict:
         paid = [i for i in items if i["gross"] < 0 and re.search(r"complete", i["status"], re.I)]
         automatic = [i for i in paid if AUTOMATIC_TYPES.search(i["type"]) or i["subscription"]]
         amounts = [abs(i["gross"]) for i in paid]
-        same_amount = len(amounts) >= 3 and (max(amounts) - min(amounts)) <= 0.05 * max(amounts)
-        cadence = _cadence([i["date"] for i in paid])
+        period, cadence, conf = estimate_period([i["date"] for i in paid], [i["item"] for i in items])
+        regular = period is not None and conf >= 0.7 and len(paid) >= 3
+        # tolerate price rises: same amount, or within 25% when the timing is clearly periodic
+        same_amount = len(amounts) >= 3 and (max(amounts) - min(amounts)) <= (0.25 if regular else 0.05) * max(amounts)
 
         if automatic or subs:
-            kind, reason = "SUBSCRIPTION", f"{len(automatic)} automatic {cadence} charges" + (f", subscription {subs[0]}" if subs else "")
-        elif same_amount and cadence in ("monthly", "weekly", "yearly", "quarterly"):
+            n = len(automatic)
+            kind, reason = "SUBSCRIPTION", (f"{n} automatic {cadence} charge{'s' if n != 1 else ''}"
+                                            + (f", subscription {subs[0]}" if subs else ""))
+        elif same_amount and regular:
             kind, reason = "SUBSCRIPTION", f"same amount charged {cadence}, {len(paid)} times: looks like a saved billing agreement"
         elif invoices:
             kind, reason = "INVOICE", f"open invoice {invoices[-1]['invoice'] or ''} sent to this account".strip()
@@ -130,10 +151,22 @@ def analyse(rows: list[dict], date_of_death: str) -> dict:
                     and MANUAL_TYPES.search(i["type"]):
                 manual_after.append({"name": i["name"], "date": i["date"].isoformat(), "amount": abs(i["gross"])})
 
+        next_charge, yearly = None, 0.0
+        if kind == "SUBSCRIPTION" and period and paid:
+            nxt = paid[-1]["date"] + timedelta(days=round(period))
+            today = date.today()
+            while nxt <= today:                     # it would already have been charged; keep rolling forward
+                nxt += timedelta(days=round(period))
+            next_charge = nxt.isoformat()
+            yearly = round(amounts[-1] * 365.25 / period, 2)
         findings.append({
+            "period_days": period, "next_charge": next_charge, "yearly_cost": yearly,
+            "price_note": price_note(paid) if kind == "SUBSCRIPTION" else None,
             "merchant_name": name, "merchant_email": items[-1]["to"], "kind": kind,
             "recurring": kind == "SUBSCRIPTION", "cadence": cadence,
-            "typical_amount": round(median(amounts), 2) if amounts else (abs(invoices[-1]["gross"]) if invoices else 0.0),
+            # subscriptions: what it costs now (after any price rise); others: the typical amount
+            "typical_amount": (round(amounts[-1], 2) if kind == "SUBSCRIPTION" else round(median(amounts), 2)) if amounts
+            else (abs(invoices[-1]["gross"]) if invoices else 0.0),
             "currency": currency,
             "references_json": {"subscription_ids": subs, "transaction_ids": [i["txn"] for i in paid],
                                 "invoice_ids": [i["invoice"] for i in invoices if i["invoice"]]},
@@ -143,7 +176,7 @@ def analyse(rows: list[dict], date_of_death: str) -> dict:
         })
 
     order = {"SUBSCRIPTION": 0, "INVOICE": 1, "ONE_OFF": 2, "PERSONAL": 3}
-    findings.sort(key=lambda f: (order[f["kind"]], -f["owed_back"], f["merchant_name"]))
+    findings.sort(key=lambda f: (order[f["kind"]], f["next_charge"] or "9999", f["merchant_name"]))  # soonest charge first
     holder_name = ""  # PayPal exports name the counterparty, not the account holder
     return {
         "account_holder_email": holder_email,

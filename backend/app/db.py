@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS cases (
     claimant_name TEXT, claimant_email TEXT, relationship TEXT, language TEXT,
     deceased_name TEXT, deceased_email TEXT, date_of_birth TEXT, date_of_death TEXT,
     place_of_death TEXT, registration_number TEXT, issuing_authority TEXT, country TEXT,
-    certificate_sha256 TEXT, certificate_language TEXT, certificate_deleted_at TEXT,
+    certificate_sha256 TEXT, certificate_phash TEXT, certificate_language TEXT, certificate_deleted_at TEXT,
+    network TEXT,             -- JSON: cross-case fraud graph result
     extraction TEXT,          -- JSON: raw fields + engine
     verification TEXT,        -- JSON: {score, checks:[{check,passed,detail}]}
     status TEXT,              -- DRAFT | VERIFIED | NOTIFIED | CLOSED
@@ -41,6 +42,7 @@ CREATE TABLE IF NOT EXISTS findings (
     references_json TEXT,     -- JSON {subscription_ids, transaction_ids, invoice_ids}
     charges_after_death TEXT, -- JSON [{date, amount, transaction_id}]
     owed_back REAL, reason TEXT, selected INTEGER,
+    period_days REAL, next_charge TEXT, yearly_cost REAL, price_note TEXT,
     notice_id TEXT, status TEXT  -- FOUND | NOTIFIED | RECEIVED | CLOSED | NOT_ON_NETWORK
 );
 -- ---------------------------------------------------------------- merchant side
@@ -50,7 +52,8 @@ CREATE TABLE IF NOT EXISTS merchants (
 );
 CREATE TABLE IF NOT EXISTS merchant_customers (
     id TEXT PRIMARY KEY, merchant_id TEXT, customer_name TEXT, email TEXT,
-    paypal_subscription_id TEXT, plan_name TEXT, amount REAL, currency TEXT, status TEXT
+    paypal_subscription_id TEXT, plan_name TEXT, amount REAL, currency TEXT, status TEXT,
+    emails_suppressed INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS merchant_invoices (
     id TEXT PRIMARY KEY, merchant_id TEXT, email TEXT, paypal_invoice_id TEXT,
@@ -64,6 +67,8 @@ CREATE TABLE IF NOT EXISTS notices (
     review TEXT,              -- JSON: merchant-side checks + matches
     outcome TEXT,             -- JSON: {cancelled:[], refunded:[{id, amount}], invoices_cancelled:[], refunded_total}
     reply TEXT,               -- merchant's letter to the family
+    receipt TEXT, receipt_sig TEXT,  -- closure receipt signed with the merchant's own Ed25519 key
+    confirmation TEXT,        -- JSON: hub's independent re-read of PayPal after closing
     received_at TEXT, closed_at TEXT, created_at TEXT
 );
 CREATE TABLE IF NOT EXISTS pending_actions (
@@ -88,7 +93,7 @@ CREATE TRIGGER IF NOT EXISTS audit_append_only_d BEFORE DELETE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 """
 
-JSON_COLS = {"extraction", "verification", "references_json", "charges_after_death", "payload",
+JSON_COLS = {"network", "receipt", "confirmation", "extraction", "verification", "references_json", "charges_after_death", "payload",
              "review", "outcome", "params", "policy_checks", "detail"}
 TABLES = ("cases", "findings", "merchants", "merchant_customers", "merchant_invoices", "notices", "pending_actions")
 

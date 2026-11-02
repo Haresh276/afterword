@@ -35,7 +35,9 @@ MERCHANTS = [
     ("m_dailyledger", "The Daily Ledger", "News", 12.00, 0, 0, "#5b4b6b", "sub"),
     ("m_bookshelf", "Bookshelf+", "Audiobooks", 14.95, 1, 40, "#6b4f3a", "sub"),
     ("m_harbor", "Harbor Language School", "Lessons", 120.00, 1, 0, "#2f5d62", "invoice"),
+    ("m_safehome", "SafeHome Antivirus", "Software", 59.99, 1, 0, "#3e5a63", "annual"),
 ]
+PRICE_RISE = {"m_streambox": 13.99}   # StreamBox raised its price two charges ago (tests price-drift tolerance)
 OFF_NETWORK = ("GreenLeaf Seeds", "orders@greenleafseeds.example", 18.00)
 
 
@@ -80,14 +82,38 @@ def make_specimen() -> bytes:
         d.text((110, y + 34), value, font=V, fill="#1f2a2b")
         d.line([110, y + 80, W - 110, y + 80], fill="#d8dedc", width=1)
         y += 120
-    d.text((110, y + 40), "This is a SPECIMEN made for the Afterword demo. It is not an official document,", font=L, fill="#8a2c2c")
-    d.text((110, y + 72), "names a fictional registry and has no legal value.", font=L, fill="#8a2c2c")
+    d.text((110, y + 40), "This is a SPECIMEN made for the Afterword demo. It is not an official document,", font=L, fill="#3d4a4a")
+    d.text((110, y + 72), "names a fictional registry and has no legal value.", font=L, fill="#3d4a4a")
     wm = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     ImageDraw.Draw(wm).text((W / 2, H / 2), "SPECIMEN", font=WM, fill=(170, 40, 40, 60), anchor="mm")
     img = Image.alpha_composite(img.convert("RGBA"), wm.rotate(30, center=(W / 2, H / 2))).convert("RGB")
     buf = io.BytesIO()
     img.save(buf, "PNG", optimize=True)
     return buf.getvalue()
+
+
+def make_forged() -> bytes:
+    """Demo of abuse: someone photographs Lakshmi's certificate and edits the name to cancel and get
+    refunds on another person's subscriptions. Saved as a phone photo (JPEG 75), edited, re-saved."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    img = Image.open(io.BytesIO(make_specimen())).convert("RGB")
+    b = io.BytesIO()
+    img.save(b, "JPEG", quality=75)
+    img = Image.open(io.BytesIO(b.getvalue())).convert("RGB")
+    d = ImageDraw.Draw(img)
+    try:
+        f = ImageFont.truetype("/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf", 30)
+    except OSError:
+        f = ImageFont.load_default()
+    d.rectangle([105, 360, 900, 402], fill="#fbfaf6")
+    d.text((110, 364), "Meera Venkatesan", font=f, fill="#1f2a2b")
+    out = io.BytesIO()
+    img.save(out, "JPEG", quality=95)
+    data = out.getvalue()
+    certificate.SPECIMENS[certificate.sha256(data)] = {**specimen_fields(), "full_name": "Meera Venkatesan",
+                                                       "date_of_birth": "1958-07-02"}
+    return data
 
 
 def ensure_specimen() -> bytes:
@@ -123,7 +149,25 @@ def seed_demo() -> dict:
 
     for mid, name, _cat, amount, _auto, _cap, _acc, kind in MERCHANTS:
         m = db.get("merchants", mid)
-        if kind == "sub":
+        if kind == "annual":
+            if sandbox and mid not in sandbox["subscriptions"]:
+                continue
+            if sandbox:
+                s = sandbox["subscriptions"][mid]
+                sid, charges = s["subscription_id"], [(date.fromisoformat(c["date"]), c["capture_id"], c["amount"]) for c in s["captures"]]
+            else:
+                sid = pp.transport().seed_subscription(f"{name} annual", DECEASED["given"], DECEASED["surname"], email, amount, "USD",
+                                                       _ts(date.today() - timedelta(days=725)))
+                days = [date.today() - timedelta(days=725), date.today() - timedelta(days=360)]   # renews in 5 days
+                charges = [(d, pp.transport().seed_capture(sid, _ts(d), amount, "USD"), amount) for d in days]
+            db.insert("merchant_customers", {"id": db.new_id("cus"), "merchant_id": mid, "customer_name": DECEASED["name"],
+                                             "email": email, "paypal_subscription_id": sid, "plan_name": f"{name} annual",
+                                             "amount": amount, "currency": "USD", "status": "ACTIVE"})
+            for d, cid, amt in charges:
+                rows.append({"Date": d.strftime("%m/%d/%Y"), "Name": name, "Type": "Subscription Payment", "Status": "Completed",
+                             "Gross": f"-{amt:.2f}", "To Email Address": m["paypal_email"], "Transaction ID": cid,
+                             "Subscription Number": sid, "Item Title": f"{name} annual plan"})
+        elif kind == "sub":
             if sandbox:  # real sandbox subscription created by scripts/sandbox_setup.py
                 s = sandbox["subscriptions"][mid]
                 sid, charges = s["subscription_id"], [(date.fromisoformat(c["date"]), c["capture_id"], c["amount"]) for c in s["captures"]]
@@ -133,7 +177,9 @@ def seed_demo() -> dict:
                 anchor = (sum(map(ord, mid)) % 20) + 2
                 days = [death - timedelta(days=90 - anchor), death - timedelta(days=60 - anchor), death - timedelta(days=30 - anchor),
                         death + timedelta(days=min(anchor, DAYS_SINCE_DEATH - 1))]
-                charges = [(d, pp.transport().seed_capture(sid, _ts(d), amount, "USD"), amount) for d in days]
+                old = PRICE_RISE.get(mid, amount)
+                amts = [old, old, amount, amount]
+                charges = [(d, pp.transport().seed_capture(sid, _ts(d), a, "USD"), a) for d, a in zip(days, amts)]
             db.insert("merchant_customers", {"id": db.new_id("cus"), "merchant_id": mid, "customer_name": DECEASED["name"],
                                              "email": email, "paypal_subscription_id": sid, "plan_name": f"{name} monthly",
                                              "amount": amount, "currency": "USD", "status": "ACTIVE"})

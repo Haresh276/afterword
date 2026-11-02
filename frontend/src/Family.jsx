@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, fmtDate, LANGS, money, pct } from './api'
 
+const daysTo = (iso) => Math.max(0, Math.round((new Date(iso + 'T00:00:00') - new Date(new Date().toDateString())) / 864e5))
 const RELATIONS = ['daughter', 'son', 'spouse', 'partner', 'parent', 'sibling', 'grandchild', 'executor', 'friend']
 const store = {
   get: () => { try { return localStorage.getItem('afterword-case') } catch { return null } },
@@ -63,7 +64,8 @@ function Certificate({ c, refresh, notify }) {
           <button className="btn primary" disabled={!file || busy} onClick={() => send({ file })}>{busy ? 'Reading' : 'Read certificate'}</button>
           <button className="btn" disabled={busy} onClick={() => send({ use_specimen: '1' })}>Use the demo specimen</button>
         </div>
-        <p className="tiny faint" style={{ marginBottom: 0 }}>The demo specimen is fictional and stamped as such. <a href="/api/demo/specimen.png" target="_blank" rel="noreferrer">View it</a></p>
+        <p className="tiny faint" style={{ marginBottom: 0 }}>The demo specimen is fictional and stamped as such. <a href="/api/demo/specimen.png" target="_blank" rel="noreferrer">View it</a>
+          {' · '}<button className="btn quiet sm" disabled={busy} onClick={() => send({ use_specimen: 'forged' })}>Try an edited copy (fraud demo)</button></p>
       </div>
     )
   }
@@ -99,12 +101,43 @@ function Certificate({ c, refresh, notify }) {
           <div className="row"><h3 className="grow">Checks before anyone is told</h3><span className={v.blocking?.length || v.score < 0.8 ? 'no' : 'ok'}>{pct(v.score)}</span></div>
           <ul className="checks" style={{ marginTop: 8 }}>
             {v.checks.map((x, i) => (
-              <li key={i}><span className={x.passed ? 'ok' : 'no'} aria-label={x.passed ? 'passed' : 'failed'}>{x.passed ? '✓' : '✕'}</span><span>{x.check}</span><span className="d">{x.detail}</span></li>
+              <li key={i}><span className={x.passed ? 'ok' : 'no'} aria-label={x.passed ? 'passed' : 'failed'}>{x.passed ? '✓' : '✕'}</span><span>{x.check}{x.critical && !x.passed && <span className="tag off">blocks sending</span>}</span><span className="d">{x.detail}</span></li>
             ))}
           </ul>
+          <Forensics fx={c.extraction?.forensics} />
+          {v.network?.links?.length > 0 && (
+            <div className="privacy" style={{ marginTop: 12 }}>
+              <span aria-hidden="true">↔</span>
+              <span>{v.network.links.map((l) => l.detail).join('; ')}. We've linked the two cases so no company is told twice.</span>
+            </div>
+          )}
         </div>
       )}
     </>
+  )
+}
+
+function Forensics({ fx }) {
+  if (!fx || !fx.ok) return null
+  const e = fx.ela || {}
+  return (
+    <details className="fx">
+      <summary>How we checked the image</summary>
+      <div className="fx-body">
+        {e.applicable && e.grid?.length ? (
+          <div className="fx-grid" role="img" aria-label={e.anomalous ? 'Heat map: a few lines of text re-compress differently from the rest' : 'Heat map: compression is even across the page'}
+            style={{ gridTemplateColumns: `repeat(${e.grid[0].length}, 1fr)` }}>
+            {e.grid.flat().map((v, i) => <span key={i} style={{ background: v > 0.55 && e.anomalous ? `rgba(151,58,58,${v})` : `rgba(47,93,82,${v * 0.35})` }} />)}
+          </div>
+        ) : null}
+        <dl className="kv small">
+          <dt>Perceptual hash</dt><dd className="num">{fx.phash} <span className="faint">survives re-saving and cropping, so an edited copy of a used certificate is recognised</span></dd>
+          <dt>Error-level analysis</dt><dd>{e.applicable ? `JPEG ghost sweep, best at quality ${e.quality}; peak z-score ${e.peak_z}` : e.reason}</dd>
+          <dt>File metadata</dt><dd>{(fx.metadata?.editors || []).length ? `edited with ${fx.metadata.editors.join(', ')}` : 'no editing software recorded'}</dd>
+        </dl>
+        <p className="tiny faint" style={{ margin: 0 }}>The heat map keeps only block scores, so the text of the certificate can't be rebuilt from it. Error-level analysis can miss edits on very high-quality photos; it's one signal among several.</p>
+      </div>
+    </details>
   )
 }
 
@@ -139,12 +172,14 @@ function Activity({ c, refresh, notify }) {
         {f.status === 'NOT_ON_NETWORK' && <span className="tag off">not on Afterword yet</span>}
         {f.kind === 'INVOICE' && <span className="tag">open invoice</span>}</span>
       <span className="amt num">{f.kind === 'SUBSCRIPTION' ? <>{money(f.typical_amount)}<span className="faint small"> / {f.cadence === 'monthly' ? 'month' : f.cadence}</span></> : f.typical_amount ? money(f.typical_amount) : ''}</span>
-      <span className="why">{f.reason}{f.owed_back > 0 && <> · <strong style={{ color: 'var(--amber)' }}>{money(f.owed_back)} taken after they died</strong></>}</span>
+      <span className="why">{f.reason}{f.price_note && <> · {f.price_note}</>}{f.owed_back > 0 && <> · <strong style={{ color: 'var(--amber)' }}>{money(f.owed_back)} taken after they died</strong></>}
+        {f.next_charge && f.kind === 'SUBSCRIPTION' && <> · <span className={daysTo(f.next_charge) <= 7 ? 'soon' : ''}>next charge {fmtDate(f.next_charge)} ({daysTo(f.next_charge) <= 1 ? 'tomorrow' : `in ${daysTo(f.next_charge)} days`})</span></>}</span>
     </div>
   )
   return (
     <div className="card">
-      <p className="sum" style={{ marginTop: 0 }}>We found <strong>{stop.length}</strong> things still charging or billing them, and <strong className="num">{money(c.totals.owed_back)}</strong> taken after {fmtDate(c.date_of_death)}.</p>
+      <p className="sum" style={{ marginTop: 0 }}>We found <strong>{stop.length}</strong> things still charging or billing them: <strong className="num">{money(c.totals.owed_back)}</strong> already taken after {fmtDate(c.date_of_death)}, <strong className="num">{money(c.totals.next_month_at_risk)}</strong> due in the next month, and <strong className="num">{money(c.totals.yearly_at_risk)}</strong> a year if nothing is done.</p>
+      <p className="tiny faint" style={{ marginTop: -6 }}>Soonest charge first. Billing periods are estimated from the gaps between charges, allowing for price rises.</p>
       <div className="group-title">We'll ask these to stop and refund</div>
       {stop.map((f) => <Row key={f.id} f={f} canPick />)}
       {leave.length > 0 && <><div className="group-title">We'll leave these alone</div>{leave.map((f) => <Row key={f.id} f={f} />)}</>}
@@ -172,7 +207,8 @@ function Board({ c }) {
   return (
     <>
       <p className="headline" aria-live="polite"><strong>{t.closed} of {t.notified}</strong> closed. <span className="num">{money(t.refunded)}</span> on its way back.</p>
-      <p className="muted small" style={{ marginTop: 0 }}>{t.closed === t.notified ? `Every company has replied. ${money(t.monthly_stopped)} a month will no longer be taken.` : 'Each company checks the notice against its own PayPal records before acting.'}</p>
+      <p className="muted small" style={{ marginTop: 0 }}>{t.closed === t.notified ? `Every company has replied. ${money(t.yearly_stopped)} a year will no longer be taken.` : 'Each company checks the notice against its own PayPal records before acting.'}
+        {t.closed > 0 && <> We re-checked PayPal ourselves: {t.confirmed} of {t.closed} confirmed.</>}</p>
       <div className="card board" style={{ marginTop: 14 }}>
         {told.map((f) => {
           const st = trackState(f)
@@ -182,6 +218,13 @@ function Board({ c }) {
               <span className="m-name">{f.merchant_name}</span>
               <span className="num small">{f.status === 'CLOSED' ? (f.kind === 'INVOICE' ? 'invoice cancelled' : `${money(f.refunded)} refunded`) : waitingPerson ? <span style={{ color: 'var(--amber)' }}>a person is reviewing</span> : ''}</span>
               <div className="track">{TRACK.map((label, i) => <span key={label} className={st[i]}>{f.kind === 'INVOICE' && i === 3 ? 'Settled' : label}</span>)}</div>
+              {f.status === 'CLOSED' && (
+                <div className="proofs">
+                  {f.notice?.receipt_valid && <span className="proof">✓ Receipt signed by {f.merchant_name}</span>}
+                  {f.notice?.confirmation?.all_confirmed && <span className="proof" title={f.notice.confirmation.items.map((i) => `${i.what}: ${i.paypal_status}`).join('\n')}>✓ Confirmed on PayPal</span>}
+                  {f.notice?.outcome?.emails_stopped && <span className="proof">✓ No more emails to them</span>}
+                </div>
+              )}
               {f.notice?.reply && <div className="reply">{f.notice.reply}</div>}
             </div>
           )
@@ -303,6 +346,15 @@ export default function Family({ notify }) {
 
       <Step n="5" title="A letter for you to keep" done={c?.status === 'CLOSED'} locked={!sent}>
         {sent && <Letter c={c} notify={notify} />}
+      </Step>
+
+      <Step n="6" title="Close the PayPal account itself" locked={!sent}>
+        {sent && (
+          <div className="card">
+            <p style={{ marginTop: 0 }}>PayPal closes a deceased person's account through its own process, and only the executor or administrator can ask. We've filled in the cover sheet it asks for and listed what to attach.</p>
+            <a className="btn" href={`/api/cases/${c.id}/paypal-packet.pdf`} target="_blank" rel="noreferrer">Download the PayPal cover sheet (PDF)</a>
+          </div>
+        )}
       </Step>
 
       {c && <p className="tiny faint" style={{ marginTop: 60 }}>All names, companies and documents in this demo are fictional. <button className="btn quiet sm" onClick={restart}>Start the demo again</button></p>}

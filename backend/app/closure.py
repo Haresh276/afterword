@@ -68,3 +68,46 @@ def build(case: dict) -> bytes:
               f"head sha256 {chain['head']}.", small)]
     doc.build(el)
     return buf.getvalue()
+
+
+def paypal_packet(case: dict) -> bytes:
+    """The family's own PayPal account still has to be closed through PayPal's deceased-account
+    process (executor or administrator only). This pre-fills the cover sheet PayPal asks for and
+    lists what to attach. Content follows PayPal's UK help article; other countries differ."""
+    ss = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=ss["Title"], fontName="Times-Roman", textColor=INK, fontSize=20, alignment=0, spaceAfter=2)
+    h2 = ParagraphStyle("h2", parent=ss["Heading2"], textColor=TEAL, fontSize=12, spaceBefore=12, spaceAfter=4)
+    body = ParagraphStyle("b", parent=ss["BodyText"], fontSize=10, leading=14, textColor=INK)
+    small = ParagraphStyle("s", parent=body, fontSize=8, leading=10.5, textColor=colors.HexColor("#5d6969"))
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=20 * mm, rightMargin=20 * mm, topMargin=18 * mm, bottomMargin=18 * mm,
+                            title="PayPal deceased account: cover sheet")
+    blank = "______________________________"
+    rows = [["Account holder (deceased)", case.get("deceased_name")], ["PayPal email", case.get("deceased_email")],
+            ["Date of death", case.get("date_of_death")],
+            ["Death certificate", f"{case.get('registration_number')} · {case.get('issuing_authority')}"],
+            ["Representative's name", blank], ["Representative's email", case.get("claimant_email") or blank],
+            ["Representative's phone", blank], ["Role", "Executor / Administrator of the estate (delete one)"]]
+    t = Table([[_p(a, body), _p(b, body)] for a, b in rows], colWidths=[55 * mm, 115 * mm])
+    t.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -1), 0.4, LINE), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    checklist = [
+        "This cover sheet, stating that the account holder has died.",
+        "A copy of the death certificate.",
+        "If money is left in the PayPal balance: a certified copy of the will naming the executor, or, with no will, a statement "
+        "of the administrator's interest in the estate and relationship to the deceased; written permission from anyone else entitled "
+        "to a share; government photo ID; a signed Standard Indemnity Form; and how the money should be paid out.",
+        "UK: balances above £5,000 need a Grant of Probate or Letters of Administration instead of the indemnity form.",
+    ]
+    el = [_p("PayPal account of a person who has died: cover sheet", h1),
+          _p(f"Prepared by Afterword on {db.now()[:10]}. Afterword has already told the companies that charged this account; "
+             "this sheet is for closing the PayPal account itself.", small),
+          _p("Cover sheet", h2), t, _p("Attach", h2)]
+    el += [_p(f"☐  {x}", body) for x in checklist]
+    el += [_p("Send", h2),
+           _p("By email to the address in PayPal's help article \"How do I close the PayPal account of a deceased relative?\", "
+              "or by post (UK) to PayPal, 76 Upper Ground, London, SE1 9PZ, United Kingdom.", body),
+           Spacer(1, 8),
+           _p("Only the executor or administrator of the estate can ask PayPal to close the account. Requirements differ by country: "
+              "check PayPal's help article for yours before sending. Afterword does not send this for you.", small)]
+    doc.build(el)
+    return buf.getvalue()

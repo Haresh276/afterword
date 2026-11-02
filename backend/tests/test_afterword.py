@@ -67,7 +67,8 @@ def test_full_flow_auto_and_manual(c):
     c.post(f"/api/merchant/notices/{inbox[0]['id']}/approve-all")
     k = c.get(f"/api/cases/{cid}").json()
     assert k["status"] == "CLOSED"
-    assert k["totals"]["closed"] == 6
+    assert k["totals"]["closed"] == 7
+    assert k["totals"]["confirmed"] == 7  # hub re-read PayPal for every company
     assert k["totals"]["refunded"] == round(15.99 + 2.99 + 9.99 + 12.00 + 14.95, 2)
     # PayPal state really changed
     for f in k["findings"]:
@@ -152,3 +153,65 @@ def test_payload_tamper_blocks(c):
     p = a["params"]; p["amount"] = "999.00"
     db.update("pending_actions", a["id"], {"params": p})
     assert c.post(f"/api/actions/{a['id']}/approve").status_code == 409
+
+
+def test_receipts_signed_and_paypal_confirmed(c):
+    k = _case(c)
+    c.post(f"/api/cases/{k['id']}/activity", data={"use_sample": "1"})
+    k = c.post(f"/api/cases/{k['id']}/notify").json()
+    sb = next(f for f in k["findings"] if f["merchant_name"] == "StreamBox")
+    assert sb["notice"]["receipt_valid"] is True
+    conf = sb["notice"]["confirmation"]
+    assert conf["all_confirmed"] and {i["paypal_status"] for i in conf["items"]} <= {"CANCELLED", "REFUNDED"}
+    assert "emails" in sb["notice"]["reply"]
+    # a receipt edited after signing no longer verifies
+    n = db.get("notices", sb["notice"]["id"])
+    r = n["receipt"]; r["outcome"]["refunded_total"] = 0
+    assert not notices.verify(r, n["receipt_sig"], party=n["merchant_id"])
+
+
+def test_prediction_annual_and_price_rise(c):
+    k = _case(c)
+    k = c.post(f"/api/cases/{k['id']}/activity", data={"use_sample": "1"}).json()
+    sh = next(f for f in k["findings"] if f["merchant_name"] == "SafeHome Antivirus")
+    assert sh["cadence"] == "yearly" and sh["owed_back"] == 0 and sh["yearly_cost"] == 59.99
+    from datetime import date, timedelta
+    assert sh["next_charge"] == (date.today() + timedelta(days=5)).isoformat()
+    sb = next(f for f in k["findings"] if f["merchant_name"] == "StreamBox")
+    assert sb["price_note"] and "13.99" in sb["price_note"] and sb["cadence"] == "monthly"
+
+
+def test_forged_certificate_blocked_by_forensics_and_network(c):
+    k = _case(c)
+    c.post(f"/api/cases/{k['id']}/activity", data={"use_sample": "1"})
+    f = c.post("/api/cases", json={"claimant_name": "Ravi K", "claimant_email": "ravi@example.com", "relationship": "son"}).json()
+    f = c.post(f"/api/cases/{f['id']}/certificate", data={"use_specimen": "forged"}).json()
+    assert f["status"] == "DRAFT"
+    blocking = " ".join(f["verification"]["blocking"])
+    assert "error-level" in blocking and "Network check" in blocking
+    assert f["verification"]["network"]["flags"][0]["kind"] in ("certificate_reused", "registration_reused")
+
+
+def test_sibling_duplicate_is_linked_not_blocked(c):
+    _case(c)
+    k2 = c.post("/api/cases", json={"claimant_name": "Arun Narayanan", "claimant_email": "arun@example.com", "relationship": "son"}).json()
+    k2 = c.post(f"/api/cases/{k2['id']}/certificate", data={"use_specimen": "1"}).json()
+    assert k2["status"] == "VERIFIED"
+    assert k2["verification"]["network"]["links"]
+
+
+def test_phash_survives_resave():
+    import io
+    from PIL import Image
+    from app import forensics
+    png = seed.make_specimen()
+    b = io.BytesIO(); Image.open(io.BytesIO(png)).convert("RGB").save(b, "JPEG", quality=60)
+    assert forensics.hamming(forensics.analyse(png)["phash"], forensics.analyse(b.getvalue())["phash"]) <= forensics.PHASH_MATCH
+
+
+def test_mcp_tools_for_merchant_agents(c):
+    h = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json", "mcp-protocol-version": "2025-06-18"}
+    c.post("/mcp/", json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18",
+           "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}, headers=h)
+    tools = c.post("/mcp/", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, headers=h).json()["result"]["tools"]
+    assert {t["name"] for t in tools} == {"list_notices", "get_notice", "verify_notice"}  # read and verify only: no money tools

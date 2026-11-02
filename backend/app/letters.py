@@ -32,7 +32,8 @@ def merchant_reply(merchant: dict, notice: dict, outcome: dict) -> str:
     facts = (f"Merchant: {merchant['name']}. Writing to {body['claimant']['name']} ({body['claimant']['relationship']} of {deceased}). "
              f"Cancelled subscriptions: {len(outcome['cancelled'])}. Refunded: {_money(outcome['refunded_total'])} "
              f"across {len(outcome['refunded'])} charges taken after {body['deceased']['date_of_death']}. "
-             f"Open invoices cancelled: {len(outcome['invoices_cancelled'])}.")
+             f"Open invoices cancelled: {len(outcome['invoices_cancelled'])}. "
+             f"Marketing and billing emails to the deceased: stopped.")
     if llm.available():
         try:
             return llm.text_call(STYLE + f" Language: {LANGS.get(body['claimant'].get('language', 'en'), 'English')}.", facts)
@@ -47,6 +48,8 @@ def merchant_reply(merchant: dict, notice: dict, outcome: dict) -> str:
     if outcome["invoices_cancelled"]:
         k = len(outcome['invoices_cancelled'])
         parts.append(f"• {'the open invoice is' if k == 1 else f'{k} open invoices are'} cancelled; nothing is owed")
+    if outcome.get("emails_stopped"):
+        parts.append("• we won't send any more emails addressed to them")
     parts += ["", "You don't need to do anything else.", "", f"{merchant['name']}"]
     return "\n".join(parts)
 

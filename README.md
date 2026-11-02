@@ -47,6 +47,36 @@ For merchants it's a moment of trust. A bereavement handled in minutes, with an 
 | Letters | Writes short, specific, kind letters in the family's language | Facts and amounts are passed in; the model can't change them |
 | Merchant agent | Drafts the review | Every money-moving call goes through the approval gate |
 
+## Techniques under the hood
+
+| Problem | Technique | Where |
+|---|---|---|
+| A forger re-saves or edits a real certificate, so its SHA-256 changes | **Perceptual hash** (64-bit DCT pHash), Hamming distance ≤ 10 means the same document | `forensics.py` |
+| A name or date typed onto a photo of a real certificate | **JPEG-ghost error-level analysis** (after Farid, 2009). The page is re-compressed across a sweep of qualities, then text blocks are compared with text blocks using robust z-scores (median / MAD). Only a 16×12 grid of block scores is kept, so the text can't be rebuilt from it | `forensics.py` |
+| One fake death used at several companies | **Fraud graph across all cases**. Union-find over certificate hashes, registration numbers, person and claimant identities. It blocks reuse for a different person, and blocks a claimant who reports 3 or more deaths in 30 days. When siblings report the same parent, the cases are linked instead of blocked | `fraud.py` |
+| Telling recurring charges from one-offs, despite price rises | **Robust period estimation**: median inter-arrival gap snapped to canonical billing periods, with a confidence score from MAD. Amounts may vary up to 25% when the timing is periodic | `activity.py` |
+| What happens if nobody acts | **Next-charge prediction** for each subscription, including annual renewals, giving the cost per year | `activity.py` |
+| "Trust me, we cancelled it" | **Two-way signatures and independent checks**. The hub signs notices (Ed25519). Each merchant signs a closure receipt with its own key. The hub then re-reads PayPal: the subscription must show `CANCELLED`, the capture `REFUNDED` and the invoice `CANCELLED` | `notices.py`, `merchant.py` |
+| Merchants already run AI support agents | **MCP server** at `/mcp` (streamable HTTP). It has read-and-verify tools only: `list_notices`, `get_notice`, `verify_notice`. No money tools | `mcp_server.py` |
+| PayPal confirming changes directly | **Webhook receiver** for `BILLING.SUBSCRIPTION.CANCELLED` and `PAYMENT.CAPTURE.REFUNDED`. Every event is checked with PayPal's `verify-webhook-signature` API, and unverified events are rejected | `main.py` |
+| "Your payment failed" emails sent to the dead | When a case closes, the merchant agent turns off all emails to that customer | `merchant.py` |
+| The PayPal account itself | A pre-filled cover sheet and checklist for PayPal's own deceased-account process (executor only), following PayPal's UK help article | `closure.py` |
+
+**Known limits, stated plainly.**
+- Error-level analysis misses edits on very high-quality originals (above about JPEG 90). It can't analyse lossless images.
+- It is one signal, and blocks only at strong evidence (peak z > 15).
+- In the demo, all merchants share one database and one PayPal sandbox account. In production, each keeps its own keys and records.
+
+## Where Afterword sits
+
+| Existing service | What it covers | Gap Afterword fills |
+|---|---|---|
+| UK **Death Notification Service** | Participating banks | Not subscriptions or retailers ([Which?](https://www.which.co.uk/news/2018/06/new-service-notifies-banks-of-a-loved-ones-death-with-a-single-click/)) |
+| UK **Tell Us Once** | Government bodies | Not private companies |
+| PayPal's deceased-account process | Closing the PayPal account (executor, by email or post) | The help article doesn't address the recurring payments still running to merchants |
+
+Afterword is "Tell Us Once" for the subscription economy, running on PayPal's rails.
+
 ## The trust layer
 
 The PayPal Agent Toolkit gives a model direct access to money-moving endpoints, with no approval hook, amount cap or payee check. Afterword wraps it in one choke point, `backend/app/paypal_gateway.py`:
@@ -97,12 +127,13 @@ cd backend && python -m pytest -q
 ## Testing instructions for judges
 
 1. Open the site. In **For families**, press *Fill in the demo family*, then *Continue*.
-2. Press *Use the demo specimen*. It's a fictional certificate stamped SPECIMEN. All 8 checks pass, and the image is deleted.
-3. Press *Use the demo export*. Afterword finds 7 things still charging or billing the account (one company isn't on Afterword yet), and $73.92 taken after the death. It leaves a one-off purchase and a payment to the person's son alone.
-4. Press *Tell 6 companies*. Five companies with auto-close rules close within seconds. Each one cancels in PayPal, refunds the post-death charge and writes to the family.
+2. Press *Use the demo specimen*. It's a fictional certificate stamped SPECIMEN. Every check passes, and the image is deleted. Open *How we checked the image*.
+3. Press *Use the demo export*. Afterword finds 8 things still charging or billing the account (one company isn't on Afterword yet). That's $73.92 already taken after the death, plus an annual antivirus renewal due in 5 days. Soonest charge first. It leaves a one-off purchase and a payment to the person's son alone.
+4. Press *Tell 7 companies*. Six companies with auto-close rules close within seconds, each showing *Receipt signed* and *Confirmed on PayPal*. Each one cancels in PayPal, refunds the post-death charge and writes to the family.
 5. Switch to **For businesses → The Daily Ledger**. This company reviews every case by hand. Open the notice, see PayPal's subscriber record match the certificate, and press *Approve all and close*.
 6. Back in **For families**, read the letter in English, हिन्दी, தமிழ் or తెలుగు, and download the PDF record.
 7. **For businesses → Audit trail → Verify the chain.**
+8. **Fraud demo.** Press *Start the demo again*, enter any name, and choose *Try an edited copy (fraud demo)*. This is Lakshmi's certificate with the name changed. It is blocked twice: the heat map lights up the edited line, and the network check finds the original. To see the network flag, run steps 1–2 first, then start a new case.
 
 ## What's next
 

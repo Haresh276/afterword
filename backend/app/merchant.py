@@ -178,16 +178,50 @@ def finalize(notice_id: str) -> dict:
     outcome["refunded_total"] = round(sum(r["amount"] for r in outcome["refunded"]), 2)
     m = db.get("merchants", n["merchant_id"])
     status = "CLOSED" if done and all(a["status"] == "EXECUTED" for a in acts) else ("ACTIONED" if done else "IN_REVIEW")
-    reply = letters.merchant_reply(m, n, outcome) if status == "CLOSED" else None
-    db.update("notices", notice_id, {"status": status, "outcome": outcome, "reply": reply,
-                                     "closed_at": db.now() if status == "CLOSED" else None})
+    vals: dict = {"status": status, "outcome": outcome, "closed_at": db.now() if status == "CLOSED" else None}
     if status == "CLOSED":
-        db.audit(f"merchant:{m['name']}", "CLOSED notice", notice_id, outcome)
+        # no more "we miss you" or "payment failed" emails addressed to the person who died
+        refs = n["payload"]["references"]
+        for sid in refs.get("subscription_ids", []):
+            for cust in db.query("SELECT id FROM merchant_customers WHERE merchant_id=? AND paypal_subscription_id=?", (m["id"], sid)):
+                db.update("merchant_customers", cust["id"], {"status": "DECEASED", "emails_suppressed": 1})
+        outcome["emails_stopped"] = True
+        vals["reply"] = letters.merchant_reply(m, n, outcome)
+        receipt = {"protocol": notices.RECEIPT_PROTOCOL, "notice_id": notice_id, "merchant": {"id": m["id"], "name": m["name"]},
+                   "outcome": outcome, "closed_at": vals["closed_at"],
+                   "approved_by": sorted({a["decided_by"] for a in done if a.get("decided_by")})}
+        vals.update(outcome=outcome, receipt=receipt, receipt_sig=notices.sign(receipt, party=m["id"]))
+    db.update("notices", notice_id, vals)
+    if status == "CLOSED":
+        db.audit(f"merchant:{m['name']}", "CLOSED notice + signed receipt", notice_id, outcome)
+        confirm(notice_id)
         f = db.query("SELECT * FROM findings WHERE notice_id=?", (notice_id,))
         if f:
             db.update("findings", f[0]["id"], {"status": "CLOSED"})
         _maybe_close_case(n["case_id"])
     return db.get("notices", notice_id)
+
+
+def confirm(notice_id: str) -> dict:
+    """The hub doesn't take a merchant's word for it: it re-reads PayPal's own records."""
+    n = db.get("notices", notice_id)
+    out = n.get("outcome") or {}
+    items = []
+    for sid in out.get("cancelled", []):
+        st = pp.call("show_subscription_details", {"subscription_id": sid}, actor="hub_verifier", ref=notice_id).get("status")
+        items.append({"what": f"subscription {sid}", "paypal_status": st, "ok": st == "CANCELLED"})
+    for r in out.get("refunded", []):
+        st = pp.call("get_capture", {"capture_id": r["capture_id"]}, actor="hub_verifier", ref=notice_id).get("status")
+        items.append({"what": f"charge {r['capture_id']} (${r['amount']:.2f})", "paypal_status": st,
+                      "ok": st in ("REFUNDED", "PARTIALLY_REFUNDED")})
+    for iid in out.get("invoices_cancelled", []):
+        st = pp.call("get_invoice", {"invoice_id": iid}, actor="hub_verifier", ref=notice_id).get("status")
+        items.append({"what": f"invoice {iid}", "paypal_status": st, "ok": st == "CANCELLED"})
+    conf = {"all_confirmed": bool(items) and all(i["ok"] for i in items), "items": items, "checked_at": db.now(),
+            "receipt_signature_valid": notices.verify(n["receipt"], n["receipt_sig"], party=n["merchant_id"]) if n.get("receipt") else False}
+    db.update("notices", notice_id, {"confirmation": conf})
+    db.audit("hub_verifier", "CONFIRMED on PayPal" if conf["all_confirmed"] else "COULD NOT CONFIRM on PayPal", notice_id, conf)
+    return conf
 
 
 def _set_finding(n: dict, status: str) -> None:
