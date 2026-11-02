@@ -51,6 +51,8 @@ def build(milestone_id: str) -> bytes:
         ["Due date", ms.get("due_date") or "-"],
         ["PayPal invoice", f"{ms.get('invoice_id') or 'not yet issued'} ({ms.get('invoice_status') or '-'})"],
         ["Verification score", f"{int((ms.get('proof_score') or 0) * 100)}%"],
+        ["Export (India GST)", f"GSTIN {c.get('freelancer_gstin') or 'not registered'}; LUT {c.get('lut_arn') or '-'}; SAC {c.get('sac_code') or '-'}"],
+        ["Forex realisation deadline", ms.get("realisation_deadline") or "-"],
     ]
     t = Table([[_p(a, body), _p(b, body)] for a, b in facts], colWidths=[38 * mm, 140 * mm])
     t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#cbd5e1")),
@@ -68,7 +70,10 @@ def build(milestone_id: str) -> bytes:
     dl = ms.get("deliverable") or {}
     el += [_p("Deliverable submitted", h2), _p(f"{dl.get('kind', '-')}: {dl.get('label') or dl.get('value', '')}", body),
            _p((dl.get("excerpt") or "")[:1500], small)]
-    el += [_p("Audit trail (every agent and human action)", h2)]
+    chain = db.verify_audit_chain()
+    el += [_p("Audit trail (every agent and human action)", h2),
+           _p(f"Hash chain {'intact' if chain['ok'] else 'BROKEN at entry ' + str(chain.get('broken_at_id'))}: "
+              f"{chain['rows_checked']} entries, head sha256 {chain['head']}", small)]
     arows = [[_p("Time (UTC)", body), _p("Actor", body), _p("Action", body)]]
     for a in log:
         arows.append([_p(a["ts"], small), _p(a["actor"], small), _p(a["action"], small)])

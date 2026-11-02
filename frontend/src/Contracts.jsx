@@ -36,8 +36,10 @@ function MilestoneEditor({ m, currency, locked, onSaved, notify }) {
 }
 
 function Review({ contract, flags, engine, reload, notify, openMilestone }) {
-  const [p, setP] = useState({ client_name: contract.client_name, client_email: contract.client_email || '' })
-  useEffect(() => setP({ client_name: contract.client_name, client_email: contract.client_email || '' }), [contract.id, contract.client_name, contract.client_email])
+  const pick = (c) => ({ client_name: c.client_name || '', client_email: c.client_email || '', freelancer_gstin: c.freelancer_gstin || '', lut_arn: c.lut_arn || '', sac_code: c.sac_code || '' })
+  const [p, setP] = useState(pick(contract))
+  useEffect(() => setP(pick(contract)), [contract])
+  const changed = JSON.stringify(p) !== JSON.stringify(pick(contract))
   const sum = contract.milestones.reduce((s, m) => s + m.amount, 0)
   const drafts = contract.milestones.some((m) => m.status === 'DRAFT')
   const anyInvoiced = contract.milestones.some((m) => m.invoice_id)
@@ -47,7 +49,7 @@ function Review({ contract, flags, engine, reload, notify, openMilestone }) {
   }
   const confirm = async () => {
     try {
-      if (p.client_email !== (contract.client_email || '') || p.client_name !== contract.client_name) await api.patch(`/api/contracts/${contract.id}`, p)
+      if (changed) await api.patch(`/api/contracts/${contract.id}`, p)
       await api.post(`/api/contracts/${contract.id}/confirm`)
       await reload()
       notify('Milestones confirmed. Submit work on any milestone to start billing.')
@@ -79,9 +81,26 @@ function Review({ contract, flags, engine, reload, notify, openMilestone }) {
           <label className="f" htmlFor="ce">Client's PayPal email (invoices go here)</label>
           <input id="ce" type="email" value={p.client_email} disabled={anyInvoiced} onChange={(e) => setP({ ...p, client_email: e.target.value })} />
         </div>
-        {!drafts && !anyInvoiced && (p.client_email !== (contract.client_email || '') || p.client_name !== contract.client_name) &&
-          <button className="btn" onClick={saveParties}>Save</button>}
       </div>
+      <details className="export" open={!!contract.freelancer_gstin}>
+        <summary>Export details for Indian GST (printed on every invoice)</summary>
+        <div className="row" style={{ alignItems: 'flex-end', marginTop: 10 }}>
+          <div style={{ flex: 1.2, minWidth: 170 }}>
+            <label className="f" htmlFor="gst">Your GSTIN (blank if not registered)</label>
+            <input id="gst" type="text" value={p.freelancer_gstin} disabled={anyInvoiced} onChange={(e) => setP({ ...p, freelancer_gstin: e.target.value.toUpperCase() })} />
+          </div>
+          <div style={{ flex: 1.2, minWidth: 170 }}>
+            <label className="f" htmlFor="lut">LUT ARN (zero-rated export)</label>
+            <input id="lut" type="text" value={p.lut_arn} disabled={anyInvoiced || !p.freelancer_gstin} onChange={(e) => setP({ ...p, lut_arn: e.target.value.toUpperCase() })} />
+          </div>
+          <div style={{ flex: 0.8, minWidth: 110 }}>
+            <label className="f" htmlFor="sac">SAC code</label>
+            <input id="sac" type="text" value={p.sac_code} disabled={anyInvoiced} onChange={(e) => setP({ ...p, sac_code: e.target.value })} />
+          </div>
+        </div>
+        <p className="small muted" style={{ margin: '8px 0 0' }}>SAC is suggested from the contract; confirm it with your CA. Payment must reach you in foreign currency within a year of the invoice to stay zero-rated, so ProofPay tracks that deadline.</p>
+      </details>
+      {!drafts && !anyInvoiced && changed && <div><button className="btn" onClick={saveParties}>Save details</button></div>}
       <div className="row">
         <h3 style={{ margin: 0 }}>Milestones</h3>
         <span className="spacer" />

@@ -94,3 +94,108 @@ def test_prompt_injection_flagged(c):
     m = k["milestones"][0]["id"]
     r = c.post(f"/api/milestones/{m}/deliverable", data={"kind": "text", "value": (SAMPLES / "deliverable_backend_api.txt").read_text()}).json()
     assert any("instructions aimed at the reviewer" in x for x in r["proof_report"]["missing"])
+
+
+# ---------------------------------------------------------------- hardening
+from app import db  # noqa: E402
+
+
+def _approved_invoice(c):
+    k = _contract(c)
+    c.post(f"/api/contracts/{k['id']}/confirm")
+    m1 = k["milestones"][0]["id"]
+    c.post(f"/api/milestones/{m1}/deliverable", data={"kind": "text", "value": (SAMPLES / "deliverable_moodboards.txt").read_text()})
+    return m1, c.post(f"/api/milestones/{m1}/propose-invoice", json={}).json()
+
+
+def test_export_wording_on_invoice(c):
+    k = _contract(c)
+    c.patch(f"/api/contracts/{k['id']}", json={"freelancer_gstin": "33AAAPZ1234C1Z5", "lut_arn": "AD330326000123X"})
+    params = pp.build_invoice_params(db.get("milestones", k["milestones"][0]["id"]))
+    note = params["detail"]["note"]
+    assert "under LUT without payment of IGST" in note and "SAC 998391" in note
+    assert params["detail"]["invoice_number"].startswith("PP-")
+
+
+def test_payload_tamper_blocks_approval(c):
+    _, act = _approved_invoice(c)
+    p = act["params"]
+    p["primary_recipients"][0]["billing_info"]["email_address"] = "attacker@evil.example"
+    db.update("pending_actions", act["id"], {"params": p})
+    assert c.post(f"/api/actions/{act['id']}/approve").status_code == 409
+    assert db.get("pending_actions", act["id"])["status"] == "PENDING"
+
+
+def test_expired_approval_refused(c):
+    _, act = _approved_invoice(c)
+    db.update("pending_actions", act["id"], {"expires_at": "2000-01-01T00:00:00+00:00"})
+    r = c.post(f"/api/actions/{act['id']}/approve")
+    assert r.status_code == 409 and "expired" in r.json()["detail"]
+
+
+def test_idempotent_replay_creates_one_invoice(c):
+    params = {"detail": {"currency_code": "USD"}, "items": []}
+    a = pp.call("create_invoice", params, actor="t", approved_action="act_same")
+    b = pp.call("create_invoice", params, actor="t", approved_action="act_same")
+    assert a["createResult"]["id"] == b["createResult"]["id"]
+
+
+def test_audit_chain_detects_tampering(c):
+    _approved_invoice(c)
+    assert c.get("/api/audit/verify").json()["ok"] is True
+    import pytest as _pt
+    import sqlite3
+    with _pt.raises(sqlite3.DatabaseError):
+        db.conn().execute("UPDATE audit_log SET action='nothing to see' WHERE id=2")
+    db.conn().execute("DROP TRIGGER audit_append_only_u")  # an attacker with raw DB access
+    db.conn().execute("UPDATE audit_log SET action='nothing to see' WHERE id=2")
+    db.conn().commit()
+    v = c.get("/api/audit/verify").json()
+    assert v["ok"] is False and v["broken_at_id"] == 2
+
+
+def test_sandbox_transport_sends_request_id_and_uses_toolkit_send(monkeypatch):
+    """Contract test for the real (sandbox) transport with HTTP mocked out."""
+    import requests
+
+    from app.paypal_gateway import _Toolkit
+
+    seen = {}
+
+    class R:
+        status_code, text = 201, "x"
+
+        @staticmethod
+        def json():
+            return {"id": "INV2-TEST", "status": "DRAFT"}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        seen.update(url=url, headers=headers, body=json)
+        return R()
+
+    monkeypatch.setattr(requests, "post", fake_post)
+    t = _Toolkit.__new__(_Toolkit)
+
+    class FakeClient:
+        base_url = "https://api-m.sandbox.paypal.com"
+
+        @staticmethod
+        def get_access_token():
+            return "tok"
+
+    calls = []
+
+    class FakeAPI:
+        _paypal_client = FakeClient()
+
+        @staticmethod
+        def run(method, params):
+            calls.append((method, params))
+            return "{}"
+
+    t.api = FakeAPI()
+    out = t.run("create_invoice", {"detail": {"currency_code": "USD", "note": "Export of services"}}, request_id="proofpay-act_1")
+    assert seen["headers"]["PayPal-Request-Id"] == "proofpay-act_1"
+    assert seen["body"]["detail"]["note"] == "Export of services"
+    assert calls == [("send_invoice", {"invoice_id": "INV2-TEST", "send_to_recipient": True})]
+    assert out["createResult"]["id"] == "INV2-TEST"

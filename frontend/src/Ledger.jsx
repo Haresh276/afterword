@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { AgGridReact } from 'ag-grid-react'
 import { themeQuartz } from 'ag-grid-community'
 import { api, money, pct, STATUS_LABEL } from './api'
@@ -42,17 +42,28 @@ export default function Ledger({ ledger, pending, openMilestone, refresh, notify
     { field: 'client_name', headerName: 'Client', minWidth: 150, filter: true },
     { field: 'contract_title', headerName: 'Project', flex: 1.4, minWidth: 180, filter: true,
       valueFormatter: (p) => (p.value || '') },
-    { field: 'name', headerName: 'Milestone', flex: 1.2, minWidth: 170, valueGetter: (p) => `${p.data.seq}. ${p.data.name}` },
+    { field: 'name', headerName: 'Milestone', flex: 1.2, minWidth: 170, valueGetter: (p) => (p.data.seq ? `${p.data.seq}. ${p.data.name}` : p.data.name) },
     { field: 'amount', headerName: 'Amount', width: 120, type: 'rightAligned', cellClass: 'num',
       valueFormatter: (p) => money(p.value, p.data.currency) },
     { field: 'due_date', headerName: 'Due', width: 115 },
     { field: 'proof_score', headerName: 'Proof', width: 140, cellRenderer: ProofCell },
     { field: 'status', headerName: 'Status', width: 200, filter: true,
-      cellRenderer: (p) => <span className={`pill ${p.value}`}>{STATUS_LABEL[p.value] || p.value}</span> },
+      cellRenderer: (p) => (p.value ? <span className={`pill ${p.value}`}>{STATUS_LABEL[p.value] || p.value}</span> : null) },
     { field: 'days_outstanding', headerName: 'Days unpaid', width: 120, type: 'rightAligned',
       cellStyle: (p) => (p.value > 7 ? { color: '#b42318', fontWeight: 700 } : null) },
+    { field: 'realisation_deadline', headerName: 'Forex deadline', width: 140, headerTooltip: 'GST: foreign currency must reach you within a year of the invoice',
+      valueGetter: (p) => (p.data && p.data.status === 'INVOICED' ? p.data.realisation_deadline : null),
+      cellStyle: (p) => (p.value && (new Date(p.value) - new Date()) / 864e5 < 60 ? { color: '#b42318', fontWeight: 700 } : null) },
     { field: 'invoice_id', headerName: 'PayPal invoice', width: 230, cellClass: 'num small' },
   ], [])
+  const grid = useRef(null)
+  const [quick, setQuick] = useState('')
+  const pinned = useMemo(() => {
+    if (!ledger.length) return []
+    const sum = (f) => ledger.filter(f).reduce((s, r) => s + r.amount, 0)
+    return [{ id: 'total', client_name: 'Total', contract_title: `${ledger.length} milestones`, name: `${money(sum((r) => r.status === 'PAID'))} paid`,
+      amount: sum(() => true), currency: 'USD', status: null, seq: '' }]
+  }, [ledger])
 
   const seed = async () => {
     try { await api.post('/api/demo/seed'); await refresh(); notify('Demo data loaded') } catch (e) { notify(e.message, true) }
@@ -98,18 +109,29 @@ export default function Ledger({ ledger, pending, openMilestone, refresh, notify
           </div>
         </div>
       ) : (
+        <>
+        <div className="row" style={{ marginBottom: 10 }}>
+          <input type="text" aria-label="Search the ledger" placeholder="Search clients, projects, invoice ids" value={quick}
+            onChange={(e) => setQuick(e.target.value)} style={{ maxWidth: 340 }} />
+          <span className="spacer" />
+          <button className="btn sm" onClick={() => grid.current?.api.exportDataAsCsv({ fileName: 'proofpay-receivables.csv' })}>Export CSV</button>
+        </div>
         <div className="grid-wrap">
           <AgGridReact
+            ref={grid}
+            quickFilterText={quick}
+            pinnedBottomRowData={pinned}
             theme={theme}
             rowData={ledger}
             columnDefs={cols}
             getRowId={(p) => p.data.id}
             defaultColDef={{ sortable: true, resizable: true }}
-            onRowClicked={(e) => openMilestone(e.data.id)}
+            onRowClicked={(e) => e.data.id !== 'total' && openMilestone(e.data.id)}
             rowStyle={{ cursor: 'pointer' }}
             animateRows
           />
         </div>
+        </>
       )}
       {status && status.paypal_mode !== 'sandbox' && ledger.length > 0 && (
         <p className="small muted" style={{ marginTop: 10 }}>

@@ -31,10 +31,13 @@ export function ApprovalCard({ a, onDone, notify }) {
         <dl className="payload">
           {item && <><dt>Line item</dt><dd>{item.name}</dd></>}
           {p.primary_recipients && <><dt>Sent to</dt><dd>{p.primary_recipients[0].billing_info.email_address}</dd></>}
+          {p.detail && p.detail.invoice_number && <><dt>Invoice number</dt><dd className="num">{p.detail.invoice_number}</dd></>}
+          {p.detail && p.detail.note && <><dt>Note printed on the invoice</dt><dd>{p.detail.note}</dd></>}
           {p.subject && <><dt>Subject</dt><dd>{p.subject}</dd></>}
           {p.note && <><dt>Message</dt><dd>{p.note}</dd></>}
           {p.invoice_id && <><dt>Invoice</dt><dd className="num">{p.invoice_id}</dd></>}
-          <dt>PayPal Agent Toolkit call</dt><dd className="num">{a.tool}</dd>
+          <dt>PayPal call</dt><dd className="num">{a.tool}{a.params_hash ? ` · payload sha256 ${a.params_hash.slice(0, 12)}…` : ''}</dd>
+          {a.expires_at && <><dt>Approval expires</dt><dd>{a.expires_at.replace('T', ' ').slice(0, 16)} UTC</dd></>}
         </dl>
       </div>
       <div className="stack">

@@ -37,6 +37,7 @@ class ContractExtraction(BaseModel):
     summary: str = ""
     milestones: list[Milestone] = Field(default_factory=list)
     risk_flags: list[str] = Field(default_factory=list)
+    sac_code: str = ""
 
     @field_validator("currency")
     @classmethod
@@ -58,7 +59,11 @@ Rules:
   If the contract is vague, write the most reasonable objective criteria and add a risk flag saying so.
 - Risk flags to look for: no late-payment clause, unlimited revisions, payment only on 'satisfaction',
   IP transfer before payment, milestone sum != total, missing client email, net-60+ terms, vague scope.
-- Dates relative to signing: assume signing date is TODAY given in the user message."""
+- Dates relative to signing: assume signing date is TODAY given in the user message.
+- "sac_code": the Indian GST Services Accounting Code that best fits the work, e.g. 998314 (IT design and
+  development), 998313 (IT consulting), 998391 (specialty design), 998392 (design originals),
+  998395 (translation). Empty string if unsure.
+Return the "sac_code" key too."""
 
 
 def extract(text: str) -> tuple[ContractExtraction, str]:
@@ -166,6 +171,9 @@ def heuristic(text: str) -> ContractExtraction:
     if current:
         r.milestones.append(current)
 
+    low_all = text.lower()
+    r.sac_code = ("998395" if "translat" in low_all else "998314" if re.search(r"\b(api|software|web app|code|developer|development agreement)\b", low_all)
+                  else "998391" if re.search(r"\b(design|logo|brand)\b", low_all) else "")
     r.summary = (
         f"{r.client_name or 'The client'} engages {r.freelancer_name or 'the freelancer'} for '{r.title}', "
         f"{len(r.milestones)} milestones totalling {r.total_amount or sum(m.amount for m in r.milestones):,.2f} {r.currency}."

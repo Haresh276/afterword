@@ -78,7 +78,7 @@ def _ingest_contract(text: str, client_email_override: str | None = None) -> dic
         "id": cid, "title": ext.title, "freelancer_name": ext.freelancer_name, "freelancer_email": ext.freelancer_email,
         "client_name": ext.client_name, "client_email": client_email_override or ext.client_email, "currency": ext.currency,
         "total_amount": ext.total_amount, "raw_text": text, "summary": ext.summary, "created_at": db.now(),
-        "risk_flags": ext.risk_flags, "engine": engine,
+        "risk_flags": ext.risk_flags, "engine": engine, "sac_code": ext.sac_code,
     })
     for i, m in enumerate(ext.milestones, start=1):
         db.insert("milestones", {
@@ -108,6 +108,9 @@ def get_contract(cid: str):
 
 
 class ContractPatch(BaseModel):
+    freelancer_gstin: str | None = None
+    lut_arn: str | None = None
+    sac_code: str | None = None
     title: str | None = None
     client_name: str | None = None
     client_email: str | None = None
@@ -301,6 +304,11 @@ def mock_pay(invoice_id: str):
     return {"changed": pp.sync_statuses()}
 
 
+@app.get("/api/audit/verify")
+def audit_verify():
+    return db.verify_audit_chain()
+
+
 @app.get("/api/audit")
 def audit(limit: int = 200):
     return db.query("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,))
@@ -322,6 +330,8 @@ def seed_demo() -> dict:
     brand = _ingest_contract((SAMPLES / "contract_brand_identity.txt").read_text(), override)
     web = _ingest_contract((SAMPLES / "contract_web_app.txt").read_text(), override)
     _ingest_contract((SAMPLES / "contract_translation.txt").read_text(), override)
+    # fictional registration details so the export invoice wording is visible in the demo
+    db.update("contracts", brand["id"], {"freelancer_gstin": "33AAAPZ1234C1Z5", "lut_arn": "AD330326000123X"})
     confirm_contract(brand["id"])
     confirm_contract(web["id"])
     b1 = brand["milestones"][0]

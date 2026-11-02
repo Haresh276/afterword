@@ -6,7 +6,8 @@ import os
 import sqlite3
 import threading
 import uuid
-from datetime import datetime, timezone
+import hashlib
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 DB_PATH = os.getenv("PROOFPAY_DB", os.path.join(os.path.dirname(__file__), "..", "proofpay.db"))
@@ -25,6 +26,9 @@ CREATE TABLE IF NOT EXISTS contracts (
     raw_text TEXT,
     summary TEXT,
     risk_flags TEXT,               -- JSON list[str]
+    freelancer_gstin TEXT,
+    lut_arn TEXT,
+    sac_code TEXT,
     engine TEXT,
     created_at TEXT
 );
@@ -46,6 +50,7 @@ CREATE TABLE IF NOT EXISTS milestones (
     sent_at TEXT,
     paid_at TEXT,
     reminders_sent INTEGER DEFAULT 0,
+    realisation_deadline TEXT,     -- GST: forex must be realised within 1 year of invoice
     updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS pending_actions (
@@ -60,7 +65,9 @@ CREATE TABLE IF NOT EXISTS pending_actions (
     decided_by TEXT,
     result TEXT,
     created_at TEXT,
-    decided_at TEXT
+    decided_at TEXT,
+    params_hash TEXT,
+    expires_at TEXT
 );
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,8 +75,14 @@ CREATE TABLE IF NOT EXISTS audit_log (
     actor TEXT,                    -- human|contract_agent|proof_agent|paypal_agent|copilot|system
     action TEXT,
     milestone_id TEXT,
-    detail TEXT                    -- JSON
+    detail TEXT,                   -- JSON
+    prev_hash TEXT,
+    hash TEXT                      -- sha256 chain: tampering with any row breaks every later hash
 );
+CREATE TRIGGER IF NOT EXISTS audit_append_only_u BEFORE UPDATE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS audit_append_only_d BEFORE DELETE ON audit_log
+BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 """
 
 JSON_COLS = {"risk_flags", "acceptance_criteria", "proof_report", "deliverable", "params", "policy_checks", "detail"}
@@ -77,6 +90,10 @@ JSON_COLS = {"risk_flags", "acceptance_criteria", "proof_report", "deliverable",
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def later(days: int = 0, hours: int = 0) -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=days, hours=hours)).isoformat(timespec="seconds")
 
 
 def new_id(prefix: str) -> str:
@@ -105,8 +122,10 @@ def reset() -> None:
     global _conn
     with _lock:
         c = conn()
-        for t in ("contracts", "milestones", "pending_actions", "audit_log"):
+        for t in ("contracts", "milestones", "pending_actions"):
             c.execute(f"DELETE FROM {t}")
+        c.execute("DROP TABLE IF EXISTS audit_log")  # demo reset only; triggers go with the table
+        c.executescript(SCHEMA)
         c.commit()
 
 
@@ -156,10 +175,33 @@ def query(sql: str, params: tuple = ()) -> list[dict]:
     return [_decode(r) for r in conn().execute(sql, params).fetchall()]
 
 
+GENESIS = "0" * 64
+
+
+def _row_hash(prev: str, ts: str, actor: str, action: str, milestone_id: str | None, detail: str | None) -> str:
+    payload = json.dumps([prev, ts, actor, action, milestone_id, detail], separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 def audit(actor: str, action: str, milestone_id: str | None = None, detail: Any = None) -> None:
     with _lock:
+        last = conn().execute("SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1").fetchone()
+        prev = (last["hash"] if last and last["hash"] else GENESIS)
+        ts = now()
+        d = json.dumps(detail, default=str, sort_keys=True) if detail is not None else None
         conn().execute(
-            "INSERT INTO audit_log (ts, actor, action, milestone_id, detail) VALUES (?, ?, ?, ?, ?)",
-            (now(), actor, action, milestone_id, json.dumps(detail, default=str) if detail is not None else None),
+            "INSERT INTO audit_log (ts, actor, action, milestone_id, detail, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (ts, actor, action, milestone_id, d, prev, _row_hash(prev, ts, actor, action, milestone_id, d)),
         )
         conn().commit()
+
+
+def verify_audit_chain() -> dict:
+    """Recompute every hash. Any edited, inserted or deleted row breaks the chain from that point."""
+    prev, n = GENESIS, 0
+    for r in conn().execute("SELECT * FROM audit_log ORDER BY id").fetchall():
+        expected = _row_hash(prev, r["ts"], r["actor"], r["action"], r["milestone_id"], r["detail"])
+        if r["prev_hash"] != prev or r["hash"] != expected:
+            return {"ok": False, "rows_checked": n, "broken_at_id": r["id"], "head": prev}
+        prev, n = r["hash"], n + 1
+    return {"ok": True, "rows_checked": n, "head": prev}

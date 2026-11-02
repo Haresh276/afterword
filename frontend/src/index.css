@@ -217,3 +217,7 @@ textarea.contract { min-height: 280px; font-size: 13.5px; line-height: 1.55; }
   .audit li { grid-template-columns: 1fr; gap: 2px; }
   .standing { font-size: 21px; }
 }
+
+details.export { border-top: 1px solid var(--line-2); padding-top: 12px; }
+details.export summary { cursor: pointer; font-weight: 600; }
+.ag-row-pinned { font-weight: 700; background: var(--paper); }
