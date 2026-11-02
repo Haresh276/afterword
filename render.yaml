@@ -2,7 +2,7 @@ services:
   - type: web
     name: proofpay
     runtime: docker
-    plan: starter
+    plan: free
     healthCheckPath: /api/status
     envVars:
       - key: PAYPAL_CLIENT_ID
