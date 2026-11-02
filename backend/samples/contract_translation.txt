@@ -1,0 +1,18 @@
+TRANSLATION SERVICES CONTRACT - Product Manual Localisation
+
+Service Provider: Meera Iyer (meera.translates@example.com), Bengaluru, India
+Client: Kenji Watanabe (kenji@aoba-robotics.example), Aoba Robotics KK, Osaka, Japan
+Total contract value: USD 1,500.00
+Payment via PayPal invoice within 14 days. Late payments accrue 1.5% interest per month.
+
+Milestone 1: English to Hindi translation of manual chapters 1-6 - USD 750 - due 2026-11-15
+Acceptance criteria:
+- Translated DOCX for chapters 1-6 preserving original headings and numbering
+- Glossary of at least 40 technical terms with approved Hindi equivalents
+- Word count report showing 9,000+ source words translated
+
+Milestone 2: English to Hindi translation of chapters 7-12 and QA - USD 750 - due 2026-11-30
+Acceptance criteria:
+- Translated DOCX for chapters 7-12
+- Second-linguist QA report with error rate under 0.5%
+- All glossary terms applied consistently

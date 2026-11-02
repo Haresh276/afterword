@@ -1,0 +1,28 @@
+STATEMENT OF WORK - Brand Identity for Lumen Coffee Roasters
+
+Freelancer: Priya Raman (priya.raman.design@example.com), Chennai, India
+Client: Daniel Becker (daniel@lumencoffee.example), Lumen Coffee Roasters GmbH, Berlin, Germany
+Contract value (total): USD 2,400.00
+Payment: via PayPal invoice per milestone, due within 7 days of invoice.
+
+Milestone 1: Discovery & moodboards - USD 600 - due 2026-11-09
+Acceptance criteria:
+- Two moodboards delivered as PDF, each with at least 12 reference images
+- One-page brand brief summarising audience, tone and competitors
+- Delivered via shared Google Drive folder
+
+Milestone 2: Logo design - USD 1,000 - due 2026-11-20
+Acceptance criteria:
+- Three distinct logo concepts in vector format (SVG and AI)
+- Each concept shown in colour and monochrome
+- Up to two rounds of revisions on the chosen concept
+
+Milestone 3: Brand guidelines - USD 800 - due 2026-12-01
+Acceptance criteria:
+- Brand guidelines PDF of at least 12 pages
+- Colour palette with HEX, RGB and CMYK values
+- Typography system with primary and secondary typefaces
+- Final logo files in SVG, PNG (transparent) and PDF
+
+Intellectual property transfers to the Client on full payment of each milestone.
+Revisions beyond those listed are billed at USD 40/hour.
