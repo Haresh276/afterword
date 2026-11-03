@@ -72,5 +72,10 @@ def build(case: dict, finding: dict, merchant: dict, notice_id: str) -> dict:
                          "checks_total": len(case["verification"]["checks"])},
         "claimant": {"name": case["claimant_name"], "relationship": case["relationship"],
                      "contact": case["claimant_email"], "language": case.get("language") or "en"},
-        "requested": ["cancel_recurring", "refund_charges_after_death", "cancel_open_invoices"],
+        "requested": ["pause_recurring_now", "cancel_recurring", "refund_charges_after_death", "cancel_open_invoices"],
+        # Irreversible steps wait until this time. The account holder's own address has been told;
+        # if they answer "I'm alive", the hub sends a signed withdrawal and paused billing is resumed.
+        "objection_window": {"irreversible_not_before": case.get("objection_deadline"),
+                             "subject_notified": bool(case.get("deceased_email"))},
+        "money_flow": "Refunds go back to the original payment only. Nothing is ever paid to the person reporting.",
     }

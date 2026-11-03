@@ -128,3 +128,17 @@ def offline_email(case: dict, finding: dict) -> str:
             + f".\n\nA death certificate (registration {case['registration_number']}, {case['issuing_authority']}) "
               f"has been verified by Afterword; certificate fingerprint sha256 {case['certificate_sha256'][:16]}…\n\n"
               f"Thank you,\n{case['claimant_name']} ({case['relationship']})\n{case['claimant_email']}")
+
+
+def objection_email(case: dict, link: str, window_text: str) -> tuple[str, str]:
+    """Sent to the deceased's own address. Written so a grieving family member reading it isn't alarmed."""
+    name = case.get("deceased_name") or "the account holder"
+    subject = f"Was {name}'s death reported by mistake?"
+    body = (f"Someone has told Afterword that {name} has died, so that their subscriptions can be stopped.\n\n"
+            f"If you are {name} and this is a mistake, open this link within {window_text} and nothing more will happen:\n"
+            f"{link}\n\n"
+            f"Billing has been paused, not cancelled. If you object, every company resumes it and no money moves. "
+            f"The report was made by {case.get('claimant_name')} ({case.get('relationship') or 'family'}).\n\n"
+            f"If you are looking after {name}'s affairs after their death, you don't need to do anything. "
+            f"We're sorry for your loss.\n\n- Afterword")
+    return subject, body

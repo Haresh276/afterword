@@ -36,3 +36,12 @@ export const fmtDate = (iso) => {
 }
 
 export const LANGS = [['en', 'English'], ['hi', 'हिन्दी'], ['ta', 'தமிழ்'], ['te', 'తెలుగు']]
+
+export function secondsUntil(iso, now = Date.now()) {
+  return iso ? Math.max(0, Math.round((new Date(iso).getTime() - now) / 1000)) : 0
+}
+export function fmtWait(s) {
+  if (s >= 3600) return `${Math.round(s / 3600)} h`
+  if (s >= 60) return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+  return `${s}s`
+}

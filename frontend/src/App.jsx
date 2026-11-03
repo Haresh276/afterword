@@ -2,9 +2,12 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
 import Family from './Family'
 import Merchant from './Merchant'
+import Lab from './Lab'
+import Alive from './Alive'
 
 export default function App() {
-  const [world, setWorld] = useState(() => (location.hash === '#business' ? 'merchant' : 'family'))
+  const [world, setWorld] = useState(() => ({ '#business': 'merchant', '#lab': 'lab' }[location.hash] || 'family'))
+  const alive = location.pathname.match(/^\/alive\/([\w-]+)/)
   const [status, setStatus] = useState(null)
   const [toast, setToast] = useState(null)
 
@@ -14,7 +17,7 @@ export default function App() {
   }, [])
 
   useEffect(() => { api.get('/api/status').then(setStatus).catch(() => {}) }, [])
-  useEffect(() => { history.replaceState(null, '', world === 'merchant' ? '#business' : '#') }, [world])
+  useEffect(() => { if (!alive) history.replaceState(null, '', { merchant: '#business', lab: '#lab' }[world] || '#') }, [world, alive])
 
   return (
     <>
@@ -29,6 +32,7 @@ export default function App() {
         <div className="world" role="group" aria-label="Who is using Afterword">
           <button aria-pressed={world === 'family'} onClick={() => setWorld('family')}>For families</button>
           <button aria-pressed={world === 'merchant'} onClick={() => setWorld('merchant')}>For businesses</button>
+          <button aria-pressed={world === 'lab'} onClick={() => setWorld('lab')}>Try to break it</button>
         </div>
         <span className="spacer" />
         {status && (
@@ -39,7 +43,7 @@ export default function App() {
           </div>
         )}
       </header>
-      {world === 'family' ? <Family notify={notify} /> : <Merchant notify={notify} />}
+      {alive ? <Alive token={alive[1]} /> : world === 'family' ? <Family notify={notify} status={status} /> : world === 'lab' ? <Lab notify={notify} /> : <Merchant notify={notify} />}
       {toast && <div role="status" className={`toast ${toast.err ? 'err' : ''}`}>{toast.msg}</div>}
     </>
   )

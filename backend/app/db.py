@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import threading
 import uuid
@@ -30,9 +31,16 @@ CREATE TABLE IF NOT EXISTS cases (
     network TEXT,             -- JSON: cross-case fraud graph result
     extraction TEXT,          -- JSON: raw fields + engine
     verification TEXT,        -- JSON: {score, checks:[{check,passed,detail}]}
-    status TEXT,              -- DRAFT | VERIFIED | NOTIFIED | CLOSED
+    status TEXT,              -- DRAFT | VERIFIED | NOTIFIED | CLOSED | OBJECTED
     letter TEXT,              -- final closure letter (family's language)
+    objection_token TEXT,     -- proof-of-life: secret link sent to the deceased's own address
+    objection_deadline TEXT,  -- irreversible actions wait until this time
+    objected_at TEXT, objection_note TEXT,
+    redteam INTEGER DEFAULT 0,  -- created by the "Try to break it" lab; ignored by the fraud graph for real cases
     created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS outbox (
+    id TEXT PRIMARY KEY, case_id TEXT, kind TEXT, to_addr TEXT, subject TEXT, body TEXT, created_at TEXT
 );
 CREATE TABLE IF NOT EXISTS findings (
     id TEXT PRIMARY KEY, case_id TEXT,
@@ -77,6 +85,9 @@ CREATE TABLE IF NOT EXISTS pending_actions (
     status TEXT,              -- PENDING | APPROVED | EXECUTED | REJECTED | FAILED | EXPIRED
     proposed_by TEXT, decided_by TEXT, result TEXT,
     params_hash TEXT, expires_at TEXT, amount REAL,
+    phase TEXT,               -- now (reversible) | after_window (irreversible)
+    not_before TEXT,          -- the gateway refuses to run it earlier (objection window)
+    preapproved_by TEXT,      -- a person approved it early; it runs when the window passes
     created_at TEXT, decided_at TEXT
 );
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);
@@ -95,15 +106,15 @@ BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 
 JSON_COLS = {"network", "receipt", "confirmation", "extraction", "verification", "references_json", "charges_after_death", "payload",
              "review", "outcome", "params", "policy_checks", "detail"}
-TABLES = ("cases", "findings", "merchants", "merchant_customers", "merchant_invoices", "notices", "pending_actions")
+TABLES = ("cases", "findings", "merchants", "merchant_customers", "merchant_invoices", "notices", "pending_actions", "outbox")
 
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def later(days: int = 0, hours: int = 0) -> str:
-    return (datetime.now(timezone.utc) + timedelta(days=days, hours=hours)).isoformat(timespec="seconds")
+def later(days: int = 0, hours: int = 0, seconds: float = 0) -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=days, hours=hours, seconds=seconds)).isoformat(timespec="seconds")
 
 
 def new_id(prefix: str) -> str:
@@ -119,8 +130,21 @@ def conn() -> sqlite3.Connection:
         _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         _conn.row_factory = sqlite3.Row
         _conn.executescript(SCHEMA)
+        _migrate(_conn)
         _conn.commit()
     return _conn
+
+
+def _migrate(c: sqlite3.Connection) -> None:
+    """Adds columns introduced after a database file was first created (CREATE TABLE IF NOT EXISTS won't)."""
+    for table, body in re.findall(r"CREATE TABLE IF NOT EXISTS (\w+) \(\n(.*?)\n\);", SCHEMA, re.S):
+        have = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
+        for line in body.split("\n"):
+            for part in re.sub(r"--.*", "", line).split(","):
+                bits = part.split()
+                if len(bits) >= 2 and bits[0].isidentifier() and bits[0].upper() not in ("PRIMARY", "FOREIGN") and bits[0] not in have:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {bits[0]} {' '.join(bits[1:]).replace('PRIMARY KEY', '')}")
+                    have.add(bits[0])
 
 
 def reset() -> None:

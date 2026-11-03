@@ -9,8 +9,8 @@ const theme = themeQuartz.withParams({
   headerBackgroundColor: '#f4f6f5', borderColor: '#d9dfdc', rowHoverColor: '#eef1ef', accentColor: '#5a4e6e',
   wrapperBorderRadius: 8, spacing: 7, fontSize: 14, headerFontWeight: 600,
 })
-const STATUS = { SENT: 'Arriving', RECEIVED: 'Received', IN_REVIEW: 'Needs review', ACTIONED: 'Partly done', CLOSED: 'Closed', REJECTED: 'Rejected' }
-const TOOL = { cancel_subscription: 'Cancel subscription', refund_capture: 'Refund a charge', cancel_sent_invoice: 'Cancel open invoice' }
+const STATUS = { SENT: 'Arriving', RECEIVED: 'Received', IN_REVIEW: 'Needs review', ACTIONED: 'Partly done', PAUSED: 'Paused · waiting', CLOSED: 'Closed', REJECTED: 'Rejected', WITHDRAWN: 'Withdrawn' }
+const TOOL = { suspend_subscription: 'Pause billing now', activate_subscription: 'Resume billing', cancel_subscription: 'Cancel subscription', refund_capture: 'Refund a charge', cancel_sent_invoice: 'Cancel open invoice' }
 
 function Notice({ id, onClose, notify, reload }) {
   const [n, setN] = useState(null)
@@ -44,6 +44,10 @@ function Notice({ id, onClose, notify, reload }) {
           </ul>
         </div>
 
+        {p.objection_window?.irreversible_not_before && (
+          <p className="tiny faint" style={{ margin: '0 0 12px' }}>Cancellations and refunds can't run before {new Date(p.objection_window.irreversible_not_before).toLocaleString()}. The account holder's own address {p.objection_window.subject_notified ? 'was' : 'could not be'} told, in case this is a mistake. {p.money_flow}</p>
+        )}
+        {n.status === 'WITHDRAWN' && <div className="card objected" role="alert"><strong>Withdrawn.</strong> The account holder answered and said they are alive. Your agent resumed billing and cancelled every pending step.</div>}
         {(n.review?.matches || []).map((m) => (
           <div className="card" key={m.id}>
             <h3>{m.type === 'subscription' ? `Subscription ${m.id}` : `Invoice ${m.id}`}</h3>
@@ -62,13 +66,16 @@ function Notice({ id, onClose, notify, reload }) {
         <h3 style={{ margin: '22px 0 10px' }}>{pending.length ? 'Your agent proposes' : 'What was done'}</h3>
         {n.actions.map((a) => (
           <div className="action" key={a.id}>
-            <div className="row"><strong className="grow">{TOOL[a.tool] || a.tool}{a.amount ? ` · ${money(a.amount)}` : ''}</strong><span className={`pill ${a.status === 'EXECUTED' ? 'CLOSED' : a.status === 'PENDING' ? 'IN_REVIEW' : 'REJECTED'}`}>{a.status === 'EXECUTED' ? 'Done' : a.status.toLowerCase()}</span></div>
+            <div className="row"><strong className="grow">{TOOL[a.tool] || a.tool}{a.amount ? ` · ${money(a.amount)}` : ''}</strong>
+              {a.phase && <span className={`phase ${a.phase}`}>{a.phase === 'now' ? 'reversible' : 'irreversible'}</span>}
+              <span className={`pill ${a.status === 'EXECUTED' ? 'CLOSED' : a.status === 'PENDING' ? (a.preapproved_by ? 'PAUSED' : 'IN_REVIEW') : 'REJECTED'}`}>{a.status === 'EXECUTED' ? 'Done' : a.status === 'PENDING' && a.preapproved_by ? 'approved · scheduled' : a.status.toLowerCase()}</span></div>
+            {a.status === 'PENDING' && a.not_before && new Date(a.not_before) > new Date() && <div className="tiny" style={{ color: 'var(--dusk)', marginTop: 2 }}>Runs after {new Date(a.not_before).toLocaleTimeString()} unless the account holder objects</div>}
             <div className="small muted">{a.rationale}</div>
             <div className="tool" style={{ marginTop: 6 }}>paypal.{a.tool} · payload sha256 {a.params_hash.slice(0, 12)}…{a.decided_by ? ` · approved by ${a.decided_by}` : ''}</div>
             <ul className="checks" style={{ marginTop: 6 }}>
               {a.policy_checks.map((c, i) => <li key={i}><span className={c.passed ? 'ok' : 'no'}>{c.passed ? '✓' : '✕'}</span><span>{c.check}</span><span className="d">{c.detail}</span></li>)}
             </ul>
-            {a.status === 'PENDING' && (
+            {a.status === 'PENDING' && !a.preapproved_by && (
               <div className="row" style={{ marginTop: 6 }}>
                 <button className="btn sm" disabled={busy || a.policy_checks.some((c) => !c.passed)} onClick={() => decide(() => api.post(`/api/actions/${a.id}/approve`))}>Approve this</button>
                 <button className="btn quiet sm" disabled={busy} onClick={() => decide(() => api.post(`/api/actions/${a.id}/reject`, { reason: 'Rejected by support' }))}>Reject</button>
@@ -76,7 +83,7 @@ function Notice({ id, onClose, notify, reload }) {
             )}
           </div>
         ))}
-        {pending.length > 0 && (
+        {pending.some((a) => !a.preapproved_by) && (
           <div className="row" style={{ marginTop: 16 }}>
             <button className="btn dusk" disabled={busy || blocked} onClick={() => decide(() => api.post(`/api/merchant/notices/${id}/approve-all`))}>
               {busy ? 'Closing' : `Approve all and close${n.review?.refund_total ? ` · refund ${money(n.review.refund_total)}` : ''}`}

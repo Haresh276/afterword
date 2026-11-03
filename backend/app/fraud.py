@@ -50,10 +50,12 @@ def _person(c: dict) -> str:
 
 def assess(case_id: str) -> dict:
     cases = db.query("SELECT id, claimant_email, claimant_name, deceased_name, date_of_birth, registration_number, "
-                     "certificate_sha256, certificate_phash, status, created_at FROM cases WHERE certificate_sha256 IS NOT NULL")
+                     "certificate_sha256, certificate_phash, status, objected_at, redteam, created_at FROM cases WHERE certificate_sha256 IS NOT NULL")
     me = next((c for c in cases if c["id"] == case_id), None)
     if not me:
         return {"component": [], "flags": [], "links": []}
+    if not me.get("redteam"):  # attacks staged in the "Try to break it" lab never taint real families' cases
+        cases = [c for c in cases if not c.get("redteam")]
     uf = _UF()
     keys: dict[str, list[str]] = defaultdict(list)
     for c in cases:
@@ -87,10 +89,19 @@ def assess(case_id: str) -> dict:
         if same_reg and not same_person:
             flags.append({"kind": "registration_reused", "critical": True, "case": o["id"],
                           "detail": f"registration {me['registration_number']} belongs to {o['deceased_name']}"})
+        if same_person and o.get("objected_at"):
+            flags.append({"kind": "subject_objected", "critical": True, "case": o["id"],
+                          "detail": f"{o['deceased_name']} answered an earlier report personally and said they are alive"})
         if same_person and o["claimant_email"].lower() != (me["claimant_email"] or "").lower():
             links.append({"case": o["id"], "claimant": o["claimant_name"], "status": o["status"], "created_at": o["created_at"],
                           "detail": f"{o['claimant_name']} already reported this death"})
 
+    me_claimant = (me["claimant_email"] or "").lower()
+    for o in cases:
+        if o["id"] != case_id and o.get("objected_at") and (o["claimant_email"] or "").lower() == me_claimant:
+            flags.append({"kind": "claimant_reported_living_person", "critical": True, "case": o["id"],
+                          "detail": f"this claimant reported {o['deceased_name']} dead, and {o['deceased_name']} answered that they are alive"})
+            break
     since = (datetime.now(timezone.utc) - timedelta(days=VELOCITY_WINDOW_DAYS)).isoformat()
     mine = [c for c in cases if (c["claimant_email"] or "").lower() == (me["claimant_email"] or "").lower() and c["created_at"] >= since]
     people = {_person(c) for c in mine if c["deceased_name"]}

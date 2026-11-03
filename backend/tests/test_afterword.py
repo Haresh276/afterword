@@ -5,6 +5,7 @@ import tempfile
 os.environ["AFTERWORD_DB"] = os.path.join(tempfile.mkdtemp(), "t.db")
 os.environ["AFTERWORD_SYNC_MERCHANTS"] = "1"
 os.environ["AFTERWORD_AUTOPILOT_DELAY"] = "0"
+os.environ["AFTERWORD_OBJECTION_WINDOW"] = "0"
 for k in ("PAYPAL_CLIENT_ID", "PAYPAL_CLIENT_SECRET", "OPENAI_API_KEY", "GEMINI_API_KEY", "LLM_API_KEY", "DEMO_CLIENT_EMAIL"):
     os.environ.pop(k, None)
 
@@ -63,7 +64,7 @@ def test_full_flow_auto_and_manual(c):
     assert st["The Daily Ledger"] == "RECEIVED" or st["The Daily Ledger"] == "NOTIFIED" or st["The Daily Ledger"] != "CLOSED"
     # the manual merchant reviews and approves
     inbox = c.get("/api/merchant/notices", params={"merchant_id": "m_dailyledger"}).json()
-    assert inbox and inbox[0]["pending"] == 2  # cancel + 1 refund
+    assert inbox and inbox[0]["pending"] == 3  # pause + cancel + 1 refund
     c.post(f"/api/merchant/notices/{inbox[0]['id']}/approve-all")
     k = c.get(f"/api/cases/{cid}").json()
     assert k["status"] == "CLOSED"
@@ -215,3 +216,85 @@ def test_mcp_tools_for_merchant_agents(c):
            "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}, headers=h)
     tools = c.post("/mcp/", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, headers=h).json()["result"]["tools"]
     assert {t["name"] for t in tools} == {"list_notices", "get_notice", "verify_notice"}  # read and verify only: no money tools
+
+
+# --------------------------------------------------------------------- objection window (proof of life)
+def _notify_with_window(c, monkeypatch, seconds):
+    from app import main
+    monkeypatch.setattr(main, "OBJECTION_SECONDS", seconds)
+    k = _case(c)
+    c.post(f"/api/cases/{k['id']}/activity", data={"use_sample": "1"})
+    return c.post(f"/api/cases/{k['id']}/notify").json()
+
+
+def _sub_status(mid):
+    sid = db.query("SELECT paypal_subscription_id FROM merchant_customers WHERE merchant_id=?", (mid,))[0]["paypal_subscription_id"]
+    return pp.call("show_subscription_details", {"subscription_id": sid}, actor="test")["status"]
+
+
+def test_pause_now_irreversible_waits_for_window(c, monkeypatch):
+    import time
+    from app import merchant
+    k = _notify_with_window(c, monkeypatch, 1.5)
+    st = {f["merchant_name"]: f for f in k["findings"] if f["notice_id"]}
+    assert st["StreamBox"]["status"] == "PAUSED" and st["StreamBox"]["notice"]["paused"]
+    assert _sub_status("m_streambox") == "SUSPENDED"            # next charge already stopped
+    assert k["totals"]["refunded"] == 0                         # but nothing irreversible yet
+    assert k["outbox"] and k["outbox"][0]["to_addr"] == seed.DECEASED["email"]
+    assert "objection_token" not in k                           # the secret never reaches the claimant's screen
+    cancel = db.query("SELECT id FROM pending_actions WHERE tool='cancel_subscription' AND merchant_id='m_streambox'")[0]["id"]
+    with pytest.raises(pp.WindowOpen):
+        pp.approve(cancel, "too-early")
+    time.sleep(1.6)
+    merchant.tick()  # the server ticker may already have done it
+    k = c.get(f"/api/cases/{k['id']}").json()
+    st = {f["merchant_name"]: f["status"] for f in k["findings"] if f["notice_id"]}
+    assert st["StreamBox"] == "CLOSED" and _sub_status("m_streambox") == "CANCELLED"
+    assert st["The Daily Ledger"] != "CLOSED"                   # manual merchants still need a person
+
+
+def test_human_preapproval_runs_after_window(c, monkeypatch):
+    import time
+    from app import merchant
+    _notify_with_window(c, monkeypatch, 1.2)
+    nid = c.get("/api/merchant/notices", params={"merchant_id": "m_dailyledger"}).json()[0]["id"]
+    out = c.post(f"/api/merchant/notices/{nid}/approve-all").json()
+    assert out["status"] == "PAUSED" and len(out["scheduled"]) == 2
+    time.sleep(1.3)
+    merchant.tick()
+    assert db.get("notices", nid)["status"] == "CLOSED"
+
+
+def test_alive_objection_rolls_everything_back(c, monkeypatch):
+    k = _notify_with_window(c, monkeypatch, 60)
+    token = db.get("cases", k["id"])["objection_token"]
+    info = c.get(f"/api/alive/{token}").json()
+    assert info["name"] == "Lakshmi Narayanan" and "StreamBox" in info["companies"]
+    c.post(f"/api/alive/{token}", json={"note": "I'm fine, this is my neighbour being cruel"})
+    k = c.get(f"/api/cases/{k['id']}").json()
+    assert k["status"] == "OBJECTED"
+    assert all(f["status"] == "WITHDRAWN" for f in k["findings"] if f["notice_id"])
+    assert _sub_status("m_streambox") == "ACTIVE"               # the pause was undone
+    assert k["totals"]["refunded"] == 0
+    assert not db.query("SELECT id FROM pending_actions WHERE status='PENDING'")
+    assert c.post(f"/api/cases/{k['id']}/notify").status_code == 409
+    # the same claimant tries again: blocked by the network
+    k2 = _case(c)
+    kinds = {f["kind"] for f in k2["network"]["flags"]}
+    assert "claimant_reported_living_person" in kinds and k2["status"] != "VERIFIED"
+    # someone else reports the same living person: also blocked
+    k3 = _case(c, claimant_name="Someone Else", claimant_email="else@example.com")
+    assert "subject_objected" in {f["kind"] for f in k3["network"]["flags"]}
+
+
+def test_red_team_lab_blocks_every_attack(c):
+    k = _case(c)                                        # a real case exists before the attacks
+    for s in c.get("/api/lab").json()["scenarios"]:
+        r = c.post(f"/api/lab/{s['id']}").json()
+        assert r["blocked"], (s["id"], r["evidence"])
+    assert c.get("/api/audit/verify").json()["ok"]
+    k = c.get(f"/api/cases/{k['id']}").json()
+    assert not k["network"]["flags"]                    # lab cases never taint a real family's case
+    c.post(f"/api/cases/{k['id']}/certificate", data={"use_specimen": "1"})
+    assert c.get(f"/api/cases/{k['id']}").json()["status"] == "VERIFIED"
+    assert not db.query("SELECT id FROM pending_actions WHERE status='PENDING'")

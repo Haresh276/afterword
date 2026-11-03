@@ -32,7 +32,8 @@ CLIENT_SECRET = os.getenv("PAYPAL_CLIENT_SECRET", "").strip()
 MODE = "sandbox" if CLIENT_ID and CLIENT_SECRET else "mock"
 APPROVAL_TTL_HOURS = int(os.getenv("AFTERWORD_APPROVAL_TTL_HOURS", "24"))
 
-MONEY_TOOLS = {"cancel_subscription", "refund_capture", "cancel_sent_invoice"}
+MONEY_TOOLS = {"cancel_subscription", "refund_capture", "cancel_sent_invoice", "suspend_subscription", "activate_subscription"}
+REVERSIBLE = {"suspend_subscription", "activate_subscription"}  # safe to run during the objection window
 
 
 # =========================================================================== transports
@@ -64,6 +65,10 @@ class _Toolkit:
             return self._rest("POST", f"/v2/payments/captures/{params['capture_id']}/refund", body, request_id)
         if method == "get_capture":
             return self._rest("GET", f"/v2/payments/captures/{params['capture_id']}")
+        if method in ("suspend_subscription", "activate_subscription"):  # REST: the Python toolkit has no tool for these
+            verb = "suspend" if method == "suspend_subscription" else "activate"
+            return self._rest("POST", f"/v1/billing/subscriptions/{params['subscription_id']}/{verb}",
+                              {"reason": params.get("reason", "")[:128]}, request_id)
         if method == "list_subscription_transactions":
             return self._rest("GET", f"/v1/billing/subscriptions/{params['subscription_id']}/transactions"
                                      f"?start_time={params['start_time']}&end_time={params['end_time']}")
@@ -149,6 +154,16 @@ class _Mock:
             c.execute("UPDATE mock_subscriptions SET status='CANCELLED' WHERE id=?", (params["subscription_id"],))
             c.commit()
             return {}
+        if method in ("suspend_subscription", "activate_subscription"):
+            s = self._one("SELECT status FROM mock_subscriptions WHERE id=?", (params["subscription_id"],))
+            if not s:
+                raise RuntimeError("PayPal 404: RESOURCE_NOT_FOUND")
+            want, need = ("SUSPENDED", "ACTIVE") if method == "suspend_subscription" else ("ACTIVE", "SUSPENDED")
+            if s["status"] != need:
+                raise RuntimeError(f"PayPal 422: SUBSCRIPTION_STATUS_INVALID ({s['status'].lower()})")
+            c.execute("UPDATE mock_subscriptions SET status=? WHERE id=?", (want, params["subscription_id"]))
+            c.commit()
+            return {}
         if method == "refund_capture":
             if request_id:
                 hit = self._one("SELECT * FROM mock_refunds WHERE request_id=?", (request_id,))
@@ -217,11 +232,14 @@ def params_hash(params: dict) -> str:
 
 
 def propose(*, notice_id: str, merchant_id: str, tool: str, params: dict, rationale: str, proposed_by: str,
-            checks: list[dict], amount: float = 0.0) -> dict:
+            checks: list[dict], amount: float = 0.0, not_before: str | None = None) -> dict:
+    phase = "now" if tool in REVERSIBLE or not not_before else "after_window"
+    ttl = db.later(hours=APPROVAL_TTL_HOURS)
     action = {"id": db.new_id("act"), "notice_id": notice_id, "merchant_id": merchant_id, "tool": tool,
               "params": params, "rationale": rationale, "policy_checks": checks, "status": "PENDING",
               "proposed_by": proposed_by, "created_at": db.now(), "params_hash": params_hash(params),
-              "expires_at": db.later(hours=APPROVAL_TTL_HOURS), "amount": amount}
+              "expires_at": max(ttl, not_before or ""), "amount": amount, "phase": phase,
+              "not_before": not_before if phase == "after_window" else None}
     db.insert("pending_actions", action)
     db.audit(proposed_by, f"PROPOSED {tool}", notice_id, {"action_id": action["id"], "rationale": rationale,
                                                          "checks": checks, "payload_sha256": action["params_hash"]})
@@ -237,6 +255,13 @@ def reject(action_id: str, who: str, reason: str = "") -> dict:
     return db.get("pending_actions", action_id)
 
 
+class WindowOpen(PermissionError):
+    """An irreversible action asked to run before the objection window closed."""
+    def __init__(self, until: str):
+        self.until = until
+        super().__init__(f"Irreversible: waits until {until} in case the account holder objects.")
+
+
 def approve(action_id: str, who: str) -> dict:
     a = db.get("pending_actions", action_id)
     if not a or a["status"] != "PENDING":
@@ -248,6 +273,8 @@ def approve(action_id: str, who: str) -> dict:
         db.update("pending_actions", action_id, {"status": "EXPIRED", "decided_by": "system", "decided_at": db.now()})
         db.audit("system", f"EXPIRED {a['tool']}", a["notice_id"], {"action_id": action_id})
         raise PermissionError(f"This approval expired after {APPROVAL_TTL_HOURS} hours.")
+    if a.get("not_before") and a["not_before"] > db.now():
+        raise WindowOpen(a["not_before"])
     failed = [c for c in a["policy_checks"] if not c["passed"]]
     if failed:
         db.audit("system", f"BLOCKED {a['tool']}", a["notice_id"], {"action_id": action_id, "failed_checks": failed})

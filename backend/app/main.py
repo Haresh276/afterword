@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import activity, certificate, closure, db, forensics, letters, llm, merchant, notices, seed
+from . import activity, certificate, closure, db, forensics, lab, letters, llm, merchant, notices, seed
 from . import paypal_gateway as pp
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -36,11 +37,35 @@ async def lifespan(_: FastAPI):
     if os.getenv("AFTERWORD_SEED_ON_START", "1") == "1" and not db.query("SELECT id FROM merchants LIMIT 1"):
         await asyncio.to_thread(seed.seed_demo)
     _mcp["app"] = mcp_server.asgi_app()
+    stop = asyncio.Event()
+
+    async def ticker():  # runs irreversible steps once their objection window has passed
+        while not stop.is_set():
+            try:
+                await asyncio.to_thread(merchant.tick)
+            except Exception as exc:  # noqa: BLE001
+                db.audit("system", "tick failed", None, {"error": str(exc)[:300]})
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=2)
+            except asyncio.TimeoutError:
+                pass
+
+    task = asyncio.create_task(ticker())
     async with mcp_server.server.session_manager.run():
         yield
+    stop.set()
+    await task
 
 
-app = FastAPI(title="Afterword", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Afterword", version="1.1.0", lifespan=lifespan,
+              description="Afterword hub API: verified death notices for the subscription economy, on PayPal.")
+OBJECTION_SECONDS = float(os.getenv("AFTERWORD_OBJECTION_WINDOW", "30"))
+
+
+def _window_text(seconds: float) -> str:
+    if seconds >= 3600:
+        return f"{seconds / 3600:g} hours"
+    return f"{seconds:g} seconds"
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.mount("/mcp", _mcp_asgi)
 
@@ -52,7 +77,8 @@ def _404(what: str):
 @app.get("/api/status")
 def status():
     return {"paypal_mode": pp.MODE, "llm": llm.model_name(), "llm_live": llm.available(),
-            "min_score": merchant.MIN_SCORE, "protocol": notices.PROTOCOL}
+            "min_score": merchant.MIN_SCORE, "protocol": notices.PROTOCOL,
+            "objection_window_seconds": OBJECTION_SECONDS, "objection_window_text": _window_text(OBJECTION_SECONDS)}
 
 
 @app.get("/.well-known/afterword-hub.json")
@@ -91,6 +117,10 @@ def get_case(cid: str):
     for f in fs:
         n = db.get("notices", f["notice_id"]) if f["notice_id"] else None
         f["notice"] = {k: n[k] for k in ("id", "status", "outcome", "reply", "received_at", "closed_at", "confirmation")} if n else None
+        if n:
+            acts = db.query("SELECT tool, status, phase, not_before FROM pending_actions WHERE notice_id=?", (n["id"],))
+            f["notice"]["paused"] = any(a["tool"] == "suspend_subscription" and a["status"] == "EXECUTED" for a in acts)
+            f["notice"]["waiting_until"] = min((a["not_before"] for a in acts if a["status"] == "PENDING" and a["not_before"]), default=None)
         if n and n.get("receipt"):
             f["notice"]["receipt_valid"] = notices.verify(n["receipt"], n["receipt_sig"], party=n["merchant_id"])
         f["refunded"] = (n["outcome"] or {}).get("refunded_total", 0) if n and n.get("outcome") else 0
@@ -99,6 +129,8 @@ def get_case(cid: str):
             f["email_draft"] = letters.offline_email(c, f)
     notified = [f for f in fs if f["notice_id"]]
     c["findings"] = fs
+    c["outbox"] = db.query("SELECT kind, to_addr, subject, body, created_at FROM outbox WHERE case_id=? ORDER BY created_at", (cid,))
+    c.pop("objection_token", None)  # the secret only ever goes to the account holder's own address
     c["totals"] = {
         "found": len([f for f in fs if f["kind"] in ("SUBSCRIPTION", "INVOICE")]),
         "notified": len(notified), "closed": len([f for f in notified if f["status"] == "CLOSED"]),
@@ -109,6 +141,7 @@ def get_case(cid: str):
         "yearly_at_risk": round(sum(f["yearly_cost"] or 0 for f in fs if f["selected"] and f["kind"] == "SUBSCRIPTION"), 2),
         "next_month_at_risk": round(sum(f["typical_amount"] or 0 for f in fs if f["selected"] and f["next_charge"]
                                         and f["next_charge"] <= db.later(days=31)[:10]), 2),
+        "paused": len([f for f in notified if (f.get("notice") or {}).get("paused")]),
         "confirmed": len([f for f in notified if (f.get("notice") or {}).get("confirmation", {}) and f["notice"]["confirmation"].get("all_confirmed")]),
     }
     return c
@@ -149,8 +182,12 @@ async def upload_certificate(cid: str, file: UploadFile | None = File(None), use
         raise HTTPException(400, "Upload a photo or scan of the certificate")
     if len(data) > 12_000_000:
         raise HTTPException(413, "Please upload a file under 12 MB")
-    ext, engine = await asyncio.to_thread(certificate.extract, data, mime)
-    fx = await asyncio.to_thread(forensics.analyse, data)
+    return await asyncio.to_thread(_ingest, cid, data, mime)
+
+
+def _ingest(cid: str, data: bytes, mime: str) -> dict:
+    ext, engine = certificate.extract(data, mime)
+    fx = forensics.analyse(data)
     ext["forensics"] = fx
     digest = certificate.sha256(data)
     del data  # the image is never stored; only its fingerprint and the extracted fields
@@ -229,7 +266,22 @@ def notify(cid: str):
     v = c.get("verification") or {}
     if v.get("score", 0) < merchant.MIN_SCORE or v.get("blocking"):
         raise HTTPException(400, "Verification has to pass before anyone is told: " + "; ".join(v.get("blocking") or ["score too low"]))
+    if c["status"] == "OBJECTED":
+        raise HTTPException(409, "The account holder said they are alive. This case can't be sent.")
     sent = []
+    if not db.get("cases", cid).get("objection_deadline"):
+        token = secrets.token_urlsafe(18)
+        deadline = db.later(seconds=OBJECTION_SECONDS)
+        db.update("cases", cid, {"objection_token": token, "objection_deadline": deadline})
+        c["objection_deadline"] = deadline
+        if c.get("deceased_email"):
+            subject, body = letters.objection_email(c, f"/alive/{token}", _window_text(OBJECTION_SECONDS))
+            db.insert("outbox", {"id": db.new_id("mail"), "case_id": cid, "kind": "proof_of_life", "to_addr": c["deceased_email"],
+                                 "subject": subject, "body": body, "created_at": db.now()})
+            db.audit("hub", "SENT proof-of-life check to the account holder's own address", cid,
+                     {"to": c["deceased_email"], "irreversible_not_before": deadline})
+    else:
+        c["objection_deadline"] = db.get("cases", cid)["objection_deadline"]
     for f in c["findings"]:
         if not f["selected"] or f["notice_id"] or not f["merchant_id"]:
             continue
@@ -246,6 +298,42 @@ def notify(cid: str):
     for nid in sent:  # each merchant's agent receives independently
         merchant.receive(nid, background=background)
     return get_case(cid)
+
+
+# ------------------------------------------------------------------ proof of life ("I'm alive")
+def _by_token(token: str) -> dict:
+    rows = db.query("SELECT * FROM cases WHERE objection_token=?", (token,))
+    if not rows or not token:
+        _404("link")
+    return rows[0]
+
+
+@app.get("/api/alive/{token}")
+def alive_info(token: str):
+    c = _by_token(token)
+    return {"name": c["deceased_name"], "reported_by": c["claimant_name"], "relationship": c["relationship"],
+            "reported_at": c["created_at"], "deadline": c["objection_deadline"], "objected_at": c["objected_at"],
+            "companies": [n["name"] for n in db.query(
+                "SELECT m.name FROM notices x JOIN merchants m ON m.id=x.merchant_id WHERE x.case_id=?", (c["id"],))]}
+
+
+class Objection(BaseModel):
+    note: str = ""
+
+
+@app.post("/api/alive/{token}")
+def alive_object(token: str, body: Objection | None = None):
+    c = _by_token(token)
+    if c["objected_at"]:
+        return alive_info(token)
+    note = (body.note if body else "")[:500]
+    db.update("cases", c["id"], {"objected_at": db.now(), "objection_note": note, "status": "OBJECTED"})
+    db.audit("account_holder", "OBJECTED: says they are alive", c["id"], {"note": note})
+    for n in db.query("SELECT id, merchant_id FROM notices WHERE case_id=?", (c["id"],)):
+        withdrawal = {"protocol": notices.PROTOCOL + "/withdrawal", "notice_id": n["id"], "reason": "account holder objected", "at": db.now()}
+        db.audit("hub", "SIGNED withdrawal", n["id"], {"signature": notices.sign(withdrawal)[:24] + "..."})
+        merchant.withdraw(n["id"], "The account holder answered the proof-of-life check and said they are alive.")
+    return alive_info(token)
 
 
 @app.get("/api/cases/{cid}/letter")
@@ -370,8 +458,16 @@ def approve_all(nid: str):
 
 @app.post("/api/actions/{aid}/approve")
 def approve(aid: str):
+    who = "human (merchant support)"
     try:
-        a = pp.approve(aid, "human (merchant support)")
+        a = pp.approve(aid, who)
+    except pp.WindowOpen as w:  # irreversible: record the approval now, it runs when the window passes
+        a = db.get("pending_actions", aid)
+        if any(not c["passed"] for c in a["policy_checks"]):
+            raise HTTPException(409, "Checks failed") from w
+        db.update("pending_actions", aid, {"preapproved_by": who})
+        db.audit(who, f"PRE-APPROVED {a['tool']}", a["notice_id"], {"action_id": aid, "runs_after": w.until})
+        return {**db.get("pending_actions", aid), "scheduled": True}
     except (PermissionError, ValueError) as e:
         raise HTTPException(409, str(e)) from e
     except Exception as e:  # noqa: BLE001
@@ -399,6 +495,20 @@ def audit(limit: int = 300):
 @app.get("/api/audit/verify")
 def audit_verify():
     return db.verify_audit_chain()
+
+
+# =============================================================================== try to break it
+@app.get("/api/lab")
+def lab_list():
+    return {"paypal_mode": pp.MODE, "scenarios": lab.SCENARIOS}
+
+
+@app.post("/api/lab/{sid}")
+def lab_run(sid: str):
+    try:
+        return lab.run(sid, ingest=_ingest)
+    except KeyError:
+        _404("scenario")
 
 
 @app.get("/api/demo/specimen.png")

@@ -89,6 +89,11 @@ def build_review(n: dict, m: dict, sig_ok: bool) -> dict:
                         "charges_after_death": [{"id": t["id"], "time": t["time"],
                                                  "amount": float(t["amount_with_breakdown"]["gross_amount"]["value"]),
                                                  "currency": t["amount_with_breakdown"]["gross_amount"]["currency_code"]} for t in caps]})
+        if status == "ACTIVE":
+            proposals.append({"tool": "suspend_subscription", "amount": 0.0,
+                              "params": {"subscription_id": sid, "reason": f"Reported deceased (Afterword {n['id']}); paused pending objection window"},
+                              "rationale": "Pause billing now. Reversible: resumes at once if the account holder objects",
+                              "checks": base_checks + ident})
         if status in ("ACTIVE", "SUSPENDED"):
             proposals.append({"tool": "cancel_subscription", "amount": 0.0,
                               "params": {"subscription_id": sid, "payload": {"reason": f"Account holder died on {dod}. Afterword notice {n['id']}."}},
@@ -128,40 +133,142 @@ def build_review(n: dict, m: dict, sig_ok: bool) -> dict:
     all_pass = bool(proposals) and all(c["passed"] for p in proposals for c in p["checks"])
     auto_eligible = all_pass and refund_total <= float(m["auto_refund_cap"] or 0)
 
+    window = (body.get("objection_window") or {}).get("irreversible_not_before")
     for p in proposals:
         pp.propose(notice_id=n["id"], merchant_id=m["id"], tool=p["tool"], params=p["params"], rationale=p["rationale"],
-                   proposed_by=actor, checks=p["checks"], amount=p["amount"])
+                   proposed_by=actor, checks=p["checks"], amount=p["amount"], not_before=window)
     return {"matches": matches, "refund_total": refund_total, "all_checks_pass": all_pass,
             "auto_eligible": auto_eligible, "auto_rule": (f"Auto-close when every check passes and refunds total ≤ ${m['auto_refund_cap']:.0f}"
                                                           if m["auto_close"] else "Every case is reviewed by a person"),
-            "proposed": len(proposals)}
+            "proposed": len(proposals), "irreversible_not_before": window}
 
 
 # ------------------------------------------------------------------------- decisions
-def _autopilot(notice_id: str, delay: bool = True) -> None:
-    m = db.get("merchants", db.get("notices", notice_id)["merchant_id"])
-    for a in db.query("SELECT * FROM pending_actions WHERE notice_id=? AND status='PENDING' ORDER BY created_at", (notice_id,)):
-        if delay:
-            time.sleep(_delay())
-        try:
-            pp.approve(a["id"], f"policy:{m['name']} auto-close rule")
-        except Exception as exc:  # noqa: BLE001
-            db.audit("system", "autopilot stopped", notice_id, {"action": a["id"], "error": str(exc)})
+_locks: dict[str, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _lock(notice_id: str) -> threading.Lock:
+    with _locks_guard:
+        return _locks.setdefault(notice_id, threading.Lock())
+
+
+def _due(notice_id: str) -> list[dict]:
+    now = db.now()
+    return [a for a in db.query("SELECT * FROM pending_actions WHERE notice_id=? AND status='PENDING' ORDER BY created_at", (notice_id,))
+            if not a.get("not_before") or a["not_before"] <= now]
+
+
+def _autopilot(notice_id: str, delay: bool = True, who: str | None = None) -> None:
+    """Runs every action that is due now. Irreversible ones whose window is still open are left for tick()."""
+    lk = _lock(notice_id)
+    if not lk.acquire(blocking=False):
+        return
+    try:
+        n = db.get("notices", notice_id)
+        if n["status"] in ("WITHDRAWN", "CLOSED", "REJECTED"):
             return
-    finalize(notice_id)
+        m = db.get("merchants", n["merchant_id"])
+        for a in _due(notice_id):
+            if db.get("notices", notice_id)["status"] == "WITHDRAWN" or (db.get("cases", n["case_id"]) or {}).get("objected_at"):
+                return
+            if delay:
+                time.sleep(_delay())
+            try:
+                pp.approve(a["id"], who or a.get("preapproved_by") or f"policy:{m['name']} auto-close rule")
+            except Exception as exc:  # noqa: BLE001
+                db.audit("system", "autopilot stopped", notice_id, {"action": a["id"], "error": str(exc)})
+                return
+        _mark_waiting(notice_id)
+        finalize(notice_id)
+    finally:
+        lk.release()
+
+
+def _mark_waiting(notice_id: str) -> None:
+    n = db.get("notices", notice_id)
+    left = db.query("SELECT * FROM pending_actions WHERE notice_id=? AND status='PENDING'", (notice_id,))
+    if left and all(a.get("not_before") and a["not_before"] > db.now() for a in left) and n["status"] in ("IN_REVIEW", "ACTIONED"):
+        db.update("notices", notice_id, {"status": "PAUSED"})
+        _set_finding(n, "PAUSED")
+
+
+def tick() -> int:
+    """Runs irreversible steps whose objection window has passed, for merchants on auto-close or
+    actions a person already approved. Called every couple of seconds by the server, and by tests."""
+    ran = 0
+    now = db.now()
+    rows = db.query("""SELECT DISTINCT a.notice_id FROM pending_actions a JOIN notices n ON n.id=a.notice_id
+                       JOIN merchants m ON m.id=a.merchant_id
+                       WHERE a.status='PENDING' AND a.not_before IS NOT NULL AND a.not_before<=?
+                         AND n.status NOT IN ('WITHDRAWN','CLOSED','REJECTED')
+                         AND (a.preapproved_by IS NOT NULL OR m.auto_close=1)""", (now,))
+    for r in rows:
+        n = db.get("notices", r["notice_id"])
+        m = db.get("merchants", n["merchant_id"])
+        if not m["auto_close"] or not (n.get("review") or {}).get("auto_eligible"):
+            if not all(a.get("preapproved_by") for a in _due(n["id"])):
+                continue
+        if (db.get("cases", n["case_id"]) or {}).get("objected_at"):
+            continue
+        _autopilot(n["id"], delay=False)
+        ran += 1
+    return ran
 
 
 def approve_all(notice_id: str, who: str = "human") -> dict:
-    errors = []
+    """A person approves everything. Reversible steps run now; irreversible ones are pre-approved and
+    run by tick() when the objection window passes (unless the account holder objects first)."""
+    errors, scheduled = [], []
     for a in db.query("SELECT * FROM pending_actions WHERE notice_id=? AND status='PENDING' ORDER BY created_at", (notice_id,)):
         try:
             pp.approve(a["id"], who)
+        except pp.WindowOpen as w:
+            failed = [c for c in a["policy_checks"] if not c["passed"]]
+            if failed:
+                errors.append(f"{a['tool']}: checks failed: " + "; ".join(c["check"] for c in failed))
+                continue
+            db.update("pending_actions", a["id"], {"preapproved_by": who})
+            db.audit(who, f"PRE-APPROVED {a['tool']}", notice_id, {"action_id": a["id"], "runs_after": w.until})
+            scheduled.append(a["id"])
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{a['tool']}: {exc}")
+    _mark_waiting(notice_id)
     out = finalize(notice_id)
     if errors:
         out["errors"] = errors
+    if scheduled:
+        out["scheduled"] = scheduled
     return out
+
+
+# ------------------------------------------------------------------------- objection
+def withdraw(notice_id: str, reason: str) -> dict:
+    """The hub withdrew the notice (the account holder objected). Undo what is reversible, cancel the rest."""
+    n = db.get("notices", notice_id)
+    m = db.get("merchants", n["merchant_id"])
+    actor = f"merchant_agent:{m['name']}"
+    with _lock(notice_id):
+        for a in db.query("SELECT * FROM pending_actions WHERE notice_id=? AND status='PENDING'", (notice_id,)):
+            pp.reject(a["id"], "hub:objection", reason)
+        resumed = []
+        for a in db.query("SELECT * FROM pending_actions WHERE notice_id=? AND status='EXECUTED' AND tool='suspend_subscription'", (notice_id,)):
+            sid = a["params"]["subscription_id"]
+            if pp.call("show_subscription_details", {"subscription_id": sid}, actor=actor, ref=notice_id).get("status") != "SUSPENDED":
+                continue
+            act = pp.propose(notice_id=notice_id, merchant_id=m["id"], tool="activate_subscription",
+                             params={"subscription_id": sid, "reason": "Death report withdrawn: account holder confirmed they are alive"},
+                             rationale="Undo the pause: the account holder objected", proposed_by=actor,
+                             checks=[{"check": "Hub sent a signed withdrawal", "passed": True, "detail": reason}])
+            pp.approve(act["id"], "policy:objection (reverse a pause)")
+            resumed.append(sid)
+        irreversible = [a["tool"] for a in db.query("SELECT tool FROM pending_actions WHERE notice_id=? AND status='EXECUTED'", (notice_id,))
+                        if a["tool"] not in pp.REVERSIBLE]
+        db.update("notices", notice_id, {"status": "WITHDRAWN", "outcome": {"withdrawn": True, "resumed": resumed,
+                                                                          "already_irreversible": irreversible}})
+        _set_finding(n, "WITHDRAWN")
+        db.audit(actor, "WITHDREW: account holder objected", notice_id, {"resumed": resumed, "already_irreversible": irreversible})
+    return db.get("notices", notice_id)
 
 
 def finalize(notice_id: str) -> dict:
@@ -172,11 +279,14 @@ def finalize(notice_id: str) -> dict:
     done = [a for a in acts if a["status"] == "EXECUTED"]
     outcome = {
         "cancelled": [a["params"]["subscription_id"] for a in done if a["tool"] == "cancel_subscription"],
+        "paused_first": [a["params"]["subscription_id"] for a in done if a["tool"] == "suspend_subscription"],
         "refunded": [{"capture_id": a["params"]["capture_id"], "amount": a["amount"]} for a in done if a["tool"] == "refund_capture"],
         "invoices_cancelled": [a["params"]["invoice_id"] for a in done if a["tool"] == "cancel_sent_invoice"],
     }
     outcome["refunded_total"] = round(sum(r["amount"] for r in outcome["refunded"]), 2)
     m = db.get("merchants", n["merchant_id"])
+    if n["status"] == "WITHDRAWN":
+        return n
     status = "CLOSED" if done and all(a["status"] == "EXECUTED" for a in acts) else ("ACTIONED" if done else "IN_REVIEW")
     vals: dict = {"status": status, "outcome": outcome, "closed_at": db.now() if status == "CLOSED" else None}
     if status == "CLOSED":

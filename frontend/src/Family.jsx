@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, fmtDate, LANGS, money, pct } from './api'
+import { api, fmtDate, fmtWait, LANGS, money, pct, secondsUntil } from './api'
 
 const daysTo = (iso) => Math.max(0, Math.round((new Date(iso + 'T00:00:00') - new Date(new Date().toDateString())) / 864e5))
 const RELATIONS = ['daughter', 'son', 'spouse', 'partner', 'parent', 'sibling', 'grandchild', 'executor', 'friend']
@@ -187,37 +187,88 @@ function Activity({ c, refresh, notify }) {
   )
 }
 
-const TRACK = ['Told', 'Checked', 'Stopped', 'Refunded']
+const TRACK = ['Told', 'Checked', 'Paused', 'Stopped', 'Refunded']
 function trackState(f) {
   const s = f.status
   const n = f.notice
-  const pending = s === 'RECEIVED' || n?.status === 'IN_REVIEW' || n?.status === 'ACTIONED'
-  return TRACK.map((label, i) => {
-    if (s === 'CLOSED') return 'on'
-    if (i === 0) return s === 'NOTIFIED' || pending ? 'on' : ''
-    if (i === 1) return pending ? 'wait' : ''
+  if (s === 'CLOSED') return TRACK.map((_, i) => (i === 2 && f.kind === 'INVOICE' ? 'skip' : 'on'))
+  if (s === 'WITHDRAWN') return TRACK.map((_, i) => (i < 2 ? 'on' : ''))
+  const checking = s === 'RECEIVED' || n?.status === 'IN_REVIEW' || n?.status === 'ACTIONED'
+  const paused = s === 'PAUSED' || n?.paused
+  const held = f.kind === 'INVOICE' && paused
+  return TRACK.map((_, i) => {
+    if (i === 0) return s === 'NOTIFIED' || checking || paused ? 'on' : ''
+    if (i === 1) return paused ? 'on' : checking ? 'wait' : ''
+    if (i === 2) return held ? 'skip' : paused ? 'on' : ''
+    if (i === 3) return paused ? 'wait' : ''
     return ''
   })
 }
 
-function Board({ c }) {
+function useNow(active) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => { if (!active) return; const t = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(t) }, [active])
+  return now
+}
+
+function Inbox({ c }) {
+  const mail = (c.outbox || []).find((m) => m.kind === 'proof_of_life')
+  const [open, setOpen] = useState(false)
+  if (!mail) return null
+  const link = (mail.body.match(/\/alive\/[\w-]+/) || [])[0]
+  return (
+    <div className="card inbox">
+      <div className="row"><span className="grow small">We also wrote to <strong>{mail.to_addr}</strong>, their own address, in case this report is a mistake.</span>
+        <button className="btn quiet sm" onClick={() => setOpen(!open)} aria-expanded={open}>{open ? 'Hide' : 'See the email'}</button></div>
+      {open && (
+        <>
+          <div className="email-draft" style={{ marginTop: 10 }}><strong>{mail.subject}</strong>{'\n\n'}{mail.body}</div>
+          {link && <p className="tiny faint" style={{ margin: '8px 0 0' }}>Demo only: in real use this link exists only in their inbox. <a href={link} target="_blank" rel="noreferrer">Open it as {c.deceased_name}</a></p>}
+        </>
+      )}
+    </div>
+  )
+}
+
+function Board({ c, windowText }) {
   const told = c.findings.filter((f) => f.notice_id)
   const offline = c.findings.filter((f) => f.status === 'NOT_ON_NETWORK' && f.selected)
   const t = c.totals
+  const waiting = told.map((f) => f.notice?.waiting_until).filter(Boolean).sort()[0]
+  const now = useNow(!!waiting)
+  const left = secondsUntil(waiting, now)
+  if (c.status === 'OBJECTED') {
+    const resumed = told.reduce((n, f) => n + (f.notice?.outcome?.resumed?.length || 0), 0)
+    return (
+      <div className="card objected" role="alert">
+        <h3 style={{ marginTop: 0 }}>{c.deceased_name} answered: they are alive.</h3>
+        <p style={{ margin: 0 }}>Everything stopped. {resumed} paused {resumed === 1 ? 'subscription was' : 'subscriptions were'} resumed, nothing was cancelled and no money moved. Every company got a signed withdrawal.</p>
+        <p className="small muted" style={{ marginBottom: 0 }}>This report is now flagged. Any new report by the same person, or about {c.deceased_name}, is blocked until a person looks at it.</p>
+      </div>
+    )
+  }
   return (
     <>
       <p className="headline" aria-live="polite"><strong>{t.closed} of {t.notified}</strong> closed. <span className="num">{money(t.refunded)}</span> on its way back.</p>
-      <p className="muted small" style={{ marginTop: 0 }}>{t.closed === t.notified ? `Every company has replied. ${money(t.yearly_stopped)} a year will no longer be taken.` : 'Each company checks the notice against its own PayPal records before acting.'}
-        {t.closed > 0 && <> We re-checked PayPal ourselves: {t.confirmed} of {t.closed} confirmed.</>}</p>
+      {waiting && left > 0 ? (
+        <div className="window" aria-live="polite">
+          <span className="clock num">{fmtWait(left)}</span>
+          <span><strong>Billing is paused at {t.paused} {t.paused === 1 ? 'company' : 'companies'}.</strong> Nothing has been charged since you pressed send. Cancellations and refunds can't be undone, so they wait {windowText || 'a short while'} in case {c.deceased_name} is alive and this is a mistake.</span>
+        </div>
+      ) : (
+        <p className="muted small" style={{ marginTop: 0 }}>{t.closed === t.notified ? `Every company has replied. ${money(t.yearly_stopped)} a year will no longer be taken.` : 'Each company checks the notice against its own PayPal records before acting.'}
+          {t.closed > 0 && <> We re-checked PayPal ourselves: {t.confirmed} of {t.closed} confirmed.</>}</p>
+      )}
+      <Inbox c={c} />
       <div className="card board" style={{ marginTop: 14 }}>
         {told.map((f) => {
           const st = trackState(f)
-          const waitingPerson = f.notice?.status === 'IN_REVIEW' && !f.merchant?.auto_close
+          const waitingPerson = (f.notice?.status === 'IN_REVIEW' || f.notice?.status === 'PAUSED') && !f.merchant?.auto_close
           return (
             <div className="m" key={f.id}>
               <span className="m-name">{f.merchant_name}</span>
-              <span className="num small">{f.status === 'CLOSED' ? (f.kind === 'INVOICE' ? 'invoice cancelled' : `${money(f.refunded)} refunded`) : waitingPerson ? <span style={{ color: 'var(--amber)' }}>a person is reviewing</span> : ''}</span>
-              <div className="track">{TRACK.map((label, i) => <span key={label} className={st[i]}>{f.kind === 'INVOICE' && i === 3 ? 'Settled' : label}</span>)}</div>
+              <span className="num small">{f.status === 'CLOSED' ? (f.kind === 'INVOICE' ? 'invoice cancelled' : f.refunded ? `${money(f.refunded)} refunded` : f.next_charge ? `renewal on ${fmtDate(f.next_charge)} stopped` : 'stopped') : waitingPerson ? <span style={{ color: 'var(--amber)' }}>a person is reviewing</span> : f.status === 'PAUSED' ? (f.kind === 'INVOICE' ? 'held, nothing owed' : 'billing paused') : ''}</span>
+              <div className="track">{TRACK.map((label, i) => <span key={label} className={st[i]}>{f.kind === 'INVOICE' && i === 4 ? 'Settled' : label}</span>)}</div>
               {f.status === 'CLOSED' && (
                 <div className="proofs">
                   {f.notice?.receipt_valid && <span className="proof">✓ Receipt signed by {f.merchant_name}</span>}
@@ -271,7 +322,7 @@ function Letter({ c, notify }) {
   )
 }
 
-export default function Family({ notify }) {
+export default function Family({ notify, status }) {
   const [c, setC] = useState(null)
   const [busy, setBusy] = useState(false)
   const timer = useRef(null)
@@ -303,7 +354,7 @@ export default function Family({ notify }) {
   }
 
   const verified = c && c.verification && c.verification.score >= 0.8 && !(c.verification.blocking || []).length
-  const sent = c && (c.status === 'NOTIFIED' || c.status === 'CLOSED')
+  const sent = c && ['NOTIFIED', 'CLOSED', 'OBJECTED'].includes(c.status)
   const toTell = c ? c.findings.filter((f) => f.selected && f.merchant_id && !f.notice_id).length : 0
   const offline = c ? c.findings.filter((f) => f.selected && f.status === 'NOT_ON_NETWORK').length : 0
 
@@ -327,11 +378,11 @@ export default function Family({ notify }) {
       </Step>
 
       <Step n="4" title="Tell them, once" done={sent} locked={!c?.findings?.length}>
-        {c?.findings?.length > 0 && (sent ? <Board c={c} /> : (
+        {c?.findings?.length > 0 && (sent ? <Board c={c} windowText={status?.objection_window_text} /> : (
           <div className="card">
             {verified ? (
               <>
-                <p style={{ marginTop: 0 }}>Each company gets a notice signed by Afterword with only what it needs: name, PayPal email, date of death and the payments involved. Not the certificate.</p>
+                <p style={{ marginTop: 0 }}>Each company gets a notice signed by Afterword with only what it needs: name, PayPal email, date of death and the payments involved. Not the certificate. Billing is paused straight away; anything that can't be undone waits a short while in case this is a mistake.</p>
                 <div className="row">
                   <button className="btn primary" disabled={busy || !toTell} onClick={tell}>{busy ? 'Sending' : `Tell ${toTell} ${toTell === 1 ? 'company' : 'companies'}`}</button>
                   {offline > 0 && <span className="small muted">{offline} {offline === 1 ? 'isn\'t' : 'aren\'t'} on Afterword yet; we'll write {offline === 1 ? 'that email' : 'those emails'} for you.</span>}
@@ -344,12 +395,12 @@ export default function Family({ notify }) {
         ))}
       </Step>
 
-      <Step n="5" title="A letter for you to keep" done={c?.status === 'CLOSED'} locked={!sent}>
-        {sent && <Letter c={c} notify={notify} />}
+      <Step n="5" title="A letter for you to keep" done={c?.status === 'CLOSED'} locked={!sent || c?.status === 'OBJECTED'}>
+        {sent && c.status !== 'OBJECTED' && <Letter c={c} notify={notify} />}
       </Step>
 
-      <Step n="6" title="Close the PayPal account itself" locked={!sent}>
-        {sent && (
+      <Step n="6" title="Close the PayPal account itself" locked={!sent || c?.status === 'OBJECTED'}>
+        {sent && c.status !== 'OBJECTED' && (
           <div className="card">
             <p style={{ marginTop: 0 }}>PayPal closes a deceased person's account through its own process, and only the executor or administrator can ask. We've filled in the cover sheet it asks for and listed what to attach.</p>
             <a className="btn" href={`/api/cases/${c.id}/paypal-packet.pdf`} target="_blank" rel="noreferrer">Download the PayPal cover sheet (PDF)</a>
