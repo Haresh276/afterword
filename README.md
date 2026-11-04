@@ -2,145 +2,163 @@
 
 **When someone dies, their subscriptions don't.**
 
-Afterword lets a grieving family tell every company once. It reads the death certificate in any language, finds everything still charging the person's PayPal account, and sends each company one signed, verified notice. Each company's agent checks the notice against its own PayPal records and proposes the fix: cancel the subscription, refund what was taken after the date of death, cancel open invoices. A person approves, or the company's own written auto-close rule does. The family gets one letter in their own language, plus a record they can keep.
+Afterword lets a grieving family tell every company once. It reads the death certificate in any language, finds everything still charging the person's PayPal account, and sends each company one signed, verified notice. Each company's own agent checks the notice against its PayPal records, **pauses billing at once**, then cancels and refunds what was taken after the death. A person approves, or the company's written auto-close rule does.
 
-Built for the PayPal AI Hackathon 2026 with the **PayPal Agent Toolkit (Python)**, **Gemini or OpenAI**, **AG Grid** and **Render**.
+Before anything irreversible happens, Afterword writes to the account holder's own address: *"Was this a mistake?"*. One click from a living person rolls everything back.
+
+Built for the PayPal AI Hackathon 2026 with the **PayPal Agent Toolkit (Python)**, **Gemini**, **AG Studio + AG Grid**, **Bryntum Scheduler** and **Render**.
+
+---
+
+## Judges: 3 minutes, no keys
+
+```bash
+git clone https://github.com/Haresh276/afterword && cd afterword
+python scripts/start_demo.py          # installs what's missing, opens http://localhost:8000
+```
+
+| Minute | Where | What to try |
+|---|---|---|
+| 0:00 | **For families** | *Fill in the demo family* → *Continue* → *Use the demo specimen*. Ten checks run on a fictional certificate stamped SPECIMEN, then the image is deleted. Open *How we checked the image*. |
+| 0:30 | Step 3 | *Use the demo export*. It finds 8 things still charging the account, $63.93 already taken after the death and $946.96 a year if nothing is done. The **Bryntum timeline** shows every charge before and after the death. |
+| 1:00 | Step 4 | *Tell 7 companies*. Billing is **paused** everywhere within seconds. A countdown shows the objection window (30 seconds in the demo, 72 hours in production). Open *See the email* to read what the account holder's own inbox received. Then wait: six companies cancel, refund, sign a receipt, and Afterword re-reads PayPal to confirm. The timeline turns green, and the year of charges that won't be taken fades out. |
+| 1:45 | **For businesses → The Daily Ledger** | A human-review merchant. Open the notice: PayPal's subscriber record is matched to the certificate, and each step is labelled reversible or irreversible. *Approve all*: the pause runs now, and the rest is scheduled for when the window ends. |
+| 2:15 | **For businesses → Network insights** | The **AG Studio** report covers network, PayPal steps and safety. Press *Edit this report* to drag in your own widgets. |
+| 2:40 | **Try to break it** | *Run every attack*. Nine live attacks against the real code: forged certificate, prompt injection, notice tampering, payload swap, over-refund, double refund, expired approval, agent paying without approval, audit-log rewrite. **9 of 9 blocked.** |
+| Bonus | Step 4 again | *Start the demo again*, send, then open the email link as the account holder and press *I'm alive. Stop this.* Every pause is resumed, nothing is cancelled, no money moves, and the reporter is flagged. |
+
+No keys needed. Without keys it runs on a built-in emulator of the PayPal endpoints and an offline reader for the bundled specimen. The header shows which mode is on. With `PAYPAL_CLIENT_ID`/`SECRET` set, every call goes to the real PayPal sandbox.
 
 ---
 
 ## Why
 
-- Bereaved families in the UK spend about **7 million hours a year** cancelling a dead person's subscriptions. The research values that time at **£171m**. The average person has **11.47** services and bills in their name, and each has to be contacted separately. (Life Ledger research, via [Funeral Service Times](https://funeralservicetimes.co.uk/news/people/2021/01/14/bereaved-families-lose-171m-a-year-cancelling-subscriptions))
-- **22 of the 49** largest UK savings providers had no way to report a death online. ([Fairer Finance, 2022](https://www.fairerfinance.com/insights/press-releases/financial-services-firms-continuing-to-charge-customers-after-they-die))
-- Recurring PayPal payments, both subscriptions and saved billing agreements, keep running until someone stops each one.
-
-For merchants it's a moment of trust. A bereavement handled in minutes, with an automatic refund, is the opposite of a chargeback.
+- Bereaved UK families spend about **7 million hours a year** closing a dead person's subscriptions and accounts, which the research values at **£171m**. The average person has **11.47** accounts and services to close ([Life Ledger research](https://funeralservicetimes.co.uk/news/people/2021/01/14/bereaved-families-lose-171m-a-year-cancelling-subscriptions)).
+- **22 of 49** UK savings providers had no online way to report a death ([Fairer Finance](https://www.fairerfinance.com/insights/press-releases/financial-services-firms-continuing-to-charge-customers-after-they-die)).
+- The UK Death Notification Service and Tell Us Once cover banks and government, not the subscription economy. PayPal's own deceased-account process closes the PayPal account, but doesn't stop recurring payments to merchants.
+- The other side of the risk: about **12,000 living Americans are wrongly declared dead each year** ([Smithsonian, citing SSA](https://www.smithsonianmag.com/smart-news/about-12200-people-are-erroneously-declared-dead-every-year-us-government-180955549/)). Any "tell everyone someone died" product can be abused to grief a living person. Afterword is designed around that.
 
 ## How it works
 
+```mermaid
+flowchart LR
+  F[Family] -->|certificate photo| C[Certificate agent<br/>vision model + 10 checks<br/>pHash, JPEG-ghost ELA]
+  F -->|PayPal activity CSV| A[Activity agent<br/>billing-period estimation]
+  C --> G{Fraud graph<br/>union-find across cases}
+  A --> H[Hub]
+  G --> H
+  H -->|Ed25519-signed notice| M1[Merchant agent: StreamBox]
+  H -->|signed notice| M2[Merchant agent: Daily Ledger]
+  H -->|"Was this a mistake?"| X[Account holder's own inbox]
+  X -.->|I'm alive| H
+  M1 --> P[(PayPal<br/>Agent Toolkit)]
+  M2 --> P
+  P -->|re-read: CANCELLED / REFUNDED| H
+  M1 -->|signed closure receipt| H
+```
+
 | # | Who | What happens |
 |---|---|---|
-| 1 | Family | Uploads a photo of the death certificate. A vision model reads it in any language: English, Hindi, Tamil, Telugu and more. **The image is never stored.** Only the extracted fields and a SHA-256 fingerprint are kept, so the same certificate can't be reused for someone else. |
-| 2 | Code | Eight checks, four of them blocking. A notice can't be sent if the certificate is reused, the date is impossible, the document isn't a death certificate, or **the account made payments by itself after the date of death**, which is the strongest sign of a false claim. |
-| 3 | Family | Uploads the person's PayPal activity export (CSV). Deterministic rules find subscriptions, billing agreements and open invoices, and leave one-off purchases and payments to family alone, each with a stated reason. Day/month order is detected per file, because Indian exports use DD/MM/YYYY. |
-| 4 | Hub | Signs one notice per company with **Ed25519** (`afterword/notice@1`). The notice carries only the name, PayPal email, date of death, the payment references and the verification result. The certificate itself never leaves. Merchants verify the signature with the hub key at `/.well-known/afterword-hub.json`. |
-| 5 | Merchant agent | Verifies the signature, then checks PayPal's own record. `show_subscription_details` must match the subscriber's name and email. Transactions after the date of death are listed, then it proposes `cancel_subscription`, `refund_capture` for each post-death charge, and `cancel_sent_invoice`. |
-| 6 | Person or rule | Approves. Auto-close only applies when every check passes **and** refunds are under the merchant's own cap. Everything else waits for support staff in the AG Grid inbox. |
-| 7 | Family | Watches each company close live. Gets one letter in their language, ready-to-send emails for companies not on the network, and a PDF record. |
-
-## How we use PayPal
-
-| Capability | Via | Used for |
-|---|---|---|
-| `show_subscription_details` | PayPal Agent Toolkit | Identity match against PayPal's own subscriber record |
-| `cancel_subscription` | Toolkit | Stop future charges, after approval |
-| `cancel_sent_invoice`, `get_invoice`, `send_invoice` | Toolkit | Open invoices addressed to the deceased |
-| `create_product`, `create_subscription_plan`, `create_subscription` | Toolkit | Building the sandbox demo (`scripts/sandbox_setup.py`) |
-| `GET /v1/billing/subscriptions/{id}/transactions` | Toolkit's authenticated client (no Python tool exists) | Find captures after the date of death |
-| `POST /v2/payments/captures/{id}/refund` with `PayPal-Request-Id` | Toolkit's authenticated client (no refund tool exists in Python) | Refund post-death charges exactly once |
-
-## How we use AI
-
-| Where | What the model does | What code decides |
-|---|---|---|
-| Certificate | Reads any language and format, transliterates names, notes visible alterations | Eight checks; four blocking |
-| Letters | Writes short, specific, kind letters in the family's language | Facts and amounts are passed in; the model can't change them |
-| Merchant agent | Drafts the review | Every money-moving call goes through the approval gate |
-
-## Techniques under the hood
-
-| Problem | Technique | Where |
-|---|---|---|
-| A forger re-saves or edits a real certificate, so its SHA-256 changes | **Perceptual hash** (64-bit DCT pHash), Hamming distance ≤ 10 means the same document | `forensics.py` |
-| A name or date typed onto a photo of a real certificate | **JPEG-ghost error-level analysis** (after Farid, 2009). The page is re-compressed across a sweep of qualities, then text blocks are compared with text blocks using robust z-scores (median / MAD). Only a 16×12 grid of block scores is kept, so the text can't be rebuilt from it | `forensics.py` |
-| One fake death used at several companies | **Fraud graph across all cases**. Union-find over certificate hashes, registration numbers, person and claimant identities. It blocks reuse for a different person, and blocks a claimant who reports 3 or more deaths in 30 days. When siblings report the same parent, the cases are linked instead of blocked | `fraud.py` |
-| Telling recurring charges from one-offs, despite price rises | **Robust period estimation**: median inter-arrival gap snapped to canonical billing periods, with a confidence score from MAD. Amounts may vary up to 25% when the timing is periodic | `activity.py` |
-| What happens if nobody acts | **Next-charge prediction** for each subscription, including annual renewals, giving the cost per year | `activity.py` |
-| "Trust me, we cancelled it" | **Two-way signatures and independent checks**. The hub signs notices (Ed25519). Each merchant signs a closure receipt with its own key. The hub then re-reads PayPal: the subscription must show `CANCELLED`, the capture `REFUNDED` and the invoice `CANCELLED` | `notices.py`, `merchant.py` |
-| Merchants already run AI support agents | **MCP server** at `/mcp` (streamable HTTP). It has read-and-verify tools only: `list_notices`, `get_notice`, `verify_notice`. No money tools | `mcp_server.py` |
-| PayPal confirming changes directly | **Webhook receiver** for `BILLING.SUBSCRIPTION.CANCELLED` and `PAYMENT.CAPTURE.REFUNDED`. Every event is checked with PayPal's `verify-webhook-signature` API, and unverified events are rejected | `main.py` |
-| "Your payment failed" emails sent to the dead | When a case closes, the merchant agent turns off all emails to that customer | `merchant.py` |
-| The PayPal account itself | A pre-filled cover sheet and checklist for PayPal's own deceased-account process (executor only), following PayPal's UK help article | `closure.py` |
-
-**Known limits, stated plainly.**
-- Error-level analysis misses edits on very high-quality originals (above about JPEG 90). It can't analyse lossless images.
-- It is one signal, and blocks only at strong evidence (peak z > 15).
-- In the demo, all merchants share one database and one PayPal sandbox account. In production, each keeps its own keys and records.
-
-## Where Afterword sits
-
-| Existing service | What it covers | Gap Afterword fills |
-|---|---|---|
-| UK **Death Notification Service** | Participating banks | Not subscriptions or retailers ([Which?](https://www.which.co.uk/news/2018/06/new-service-notifies-banks-of-a-loved-ones-death-with-a-single-click/)) |
-| UK **Tell Us Once** | Government bodies | Not private companies |
-| PayPal's deceased-account process | Closing the PayPal account (executor, by email or post) | The help article doesn't address the recurring payments still running to merchants |
-
-Afterword is "Tell Us Once" for the subscription economy, running on PayPal's rails.
+| 1 | Family | A vision model reads the certificate in any language. **The image is never stored**: only the fields, a SHA-256 and a perceptual hash are kept. |
+| 2 | Code | Ten checks, five of them blocking: document type, impossible dates, an edited image (JPEG-ghost ELA), the network (same certificate or registration used for someone else), and **payments the person made themselves after the date of death**. |
+| 3 | Family | The PayPal activity export is parsed with per-file date-order detection (Indian exports use DD/MM). Robust period estimation finds subscriptions, annual renewals, saved billing agreements and open invoices. One-off purchases and payments to family are left alone, with a stated reason. |
+| 4 | Hub | Signs one notice per company (`afterword/notice@1`, Ed25519). It carries only the name, PayPal email, date of death, payment references, verification result and the objection deadline. **Not the certificate.** |
+| 5 | Hub | Writes to the deceased's own address, in wording that won't alarm a family member reading it. |
+| 6 | Merchant agent | Verifies the signature, matches `show_subscription_details` to the certificate and lists transactions after the death. It proposes **pause now** (reversible), then **cancel**, **refund each post-death capture** and **cancel open invoices** (irreversible, gated on the window). |
+| 7 | Person or rule | Approves. Auto-close only applies when every check passes and refunds are under the merchant's cap. |
+| 8 | Merchant | Signs a closure receipt with its own key. Turns off every email to the deceased. |
+| 9 | Hub | Doesn't take the merchant's word for it: it **re-reads PayPal** to confirm `CANCELLED` / `REFUNDED`. |
+| 10 | Family | Gets one letter in their language (English, Hindi, Tamil, Telugu), emails ready for companies not on Afterword, a PDF record, and a filled-in cover sheet for PayPal's own deceased-account process. |
 
 ## The trust layer
 
-The PayPal Agent Toolkit gives a model direct access to money-moving endpoints, with no approval hook, amount cap or payee check. Afterword wraps it in one choke point, `backend/app/paypal_gateway.py`:
+Afterword's AI reads documents and writes letters. **No language model sits in the money path.** Amounts and targets come from code reading PayPal, and every money-moving call goes through one choke point (`backend/app/paypal_gateway.py`):
 
-- **No model can move money.** `cancel_subscription`, `refund_capture` and `cancel_sent_invoice` raise `PermissionError` without an approved action id.
-- **Approvals are bound to the payload.** Each proposal stores a SHA-256 of its exact parameters and expires after 24 hours. Any change after proposal blocks it.
-- **Exactly once.** Every money call carries `PayPal-Request-Id`, so a retry replays the same refund.
-- **Tamper-evident.** The audit log is append-only (SQLite triggers) and hash-chained, and there's a *Verify the chain* button.
+| Guarantee | How |
+|---|---|
+| Nothing irreversible before the objection window | Each action has `not_before`. The gateway refuses earlier calls with `WindowOpen`; it isn't left to the UI. |
+| No money moves without approval | `cancel`, `pause`, `resume`, `refund` and `cancel invoice` all raise without an approved action id. |
+| An approval can't be repurposed | It's bound to a SHA-256 of the exact payload and expires after 24 hours. |
+| Exactly once | Every call carries `PayPal-Request-Id`, so a retry returns the same refund. |
+| Refunds can't be redirected | They go back to the original capture only. Nothing is ever paid to the person reporting. |
+| A living person can stop it | The objection link withdraws every notice with a signed withdrawal, resumes paused billing, rejects pending steps, and flags the reporter and the person in the fraud graph. |
+| A fraudster can't lock out the real family | A reuse flag is critical only if the other case *passed*. A blocked forgery becomes an informational note on the genuine case. |
+| Tamper-evident | The audit log is append-only (SQLite triggers) and SHA-256 hash-chained, with a *Verify the chain* button. |
 
-`backend/tests/test_afterword.py` covers the full flow and each guarantee:
-- a forged notice fails signature verification;
-- a manual payment after death blocks sending;
-- a mismatched subscriber can't auto-close;
-- a tampered payload is refused;
-- a replayed refund is idempotent;
-- an over-refund is refused.
+**Try to break it** runs nine attacks against these guarantees live, in the UI. They are also in the test suite (`backend/tests`, **24 tests**).
 
-## Run it
+## Techniques
 
-**Hosted:** see the Devpost page for the link. Demo data loads automatically.
+| Problem | Technique |
+|---|---|
+| A re-saved copy of a real certificate | 64-bit DCT **perceptual hash**, with Hamming distance ≤ 10 counting as the same document |
+| A name typed onto a photo of a certificate | **JPEG-ghost error-level analysis** (after Farid, 2009). It sweeps re-compression quality on luminance and compares only text blocks, with robust median/MAD z-scores. Only a 16×12 score grid is kept. |
+| One fake death used at several companies | **Fraud graph**: union-find over certificate hashes, registration numbers, person and claimant. It flags velocity (3 deaths in 30 days), and links sibling duplicates rather than blocking them. |
+| Recurring vs one-off, with price rises | **Median inter-arrival period** snapped to canonical billing cycles, with MAD confidence and ±25% amount drift allowed when the timing is regular |
+| What happens if nobody acts | **Next-charge prediction** per subscription, including annual renewals, giving the cost per year |
+| "Trust me, we cancelled it" | **Two-way signatures**: the hub signs notices, merchants sign receipts, and the hub re-reads PayPal |
 
-**Locally:**
+Limits, stated plainly:
+- Error-level analysis misses edits on very high-quality originals (above about JPEG 90) and can't analyse lossless images. It's one signal of several.
+- In the demo, all merchants share one database and one sandbox account. In production, each keeps its own keys and records.
+
+## PayPal
+
+| Capability | Via | Used for |
+|---|---|---|
+| `show_subscription_details` | Agent Toolkit | Match the subscriber's name and email to the certificate |
+| `cancel_subscription` | Agent Toolkit | Stop future charges, after the window |
+| `get_invoice`, `cancel_sent_invoice`, `send_invoice` | Agent Toolkit | Open invoices addressed to the deceased |
+| `create_product`, `create_subscription_plan`, `create_subscription` | Agent Toolkit | Building the sandbox demo (`backend/scripts/sandbox_setup.py`) |
+| `POST /v1/billing/subscriptions/{id}/suspend` and `/activate` | Toolkit's authenticated client | Reversible pause, and resume if the person objects |
+| `GET /v1/billing/subscriptions/{id}/transactions` | Toolkit's authenticated client | Captures after the date of death |
+| `POST /v2/payments/captures/{id}/refund` + `PayPal-Request-Id` | Toolkit's authenticated client | Refund each post-death charge exactly once |
+| `POST /v1/notifications/verify-webhook-signature` | REST | Trust `BILLING.SUBSCRIPTION.CANCELLED` / `PAYMENT.CAPTURE.REFUNDED` webhooks only when PayPal vouches for them |
+
+## AI
+
+| Where | Model's job | Code's job |
+|---|---|---|
+| Certificate | Read any language and layout, transliterate names, note visible alterations | Ten checks; five blocking |
+| Letters | Kind, specific letters in the family's language | Facts and amounts passed in; the model can't change them |
+| AG Studio assistant | AG Studio's own agent explains and builds charts | `/api/ai/responses` is an **OpenAI Responses-API shim over Gemini**, so AG's documented adapter runs unchanged with no OpenAI key |
+| Merchants' own agents | Read and verify notices over **MCP** at `/mcp` (`list_notices`, `get_notice`, `verify_notice`) | Read-only: no MCP tool can move money |
+
+## Sponsor tools
+
+- **AG Studio**: *For businesses → Network insights*. A three-page report (network, PayPal steps, safety) over live hub data plus a seeded 90-day simulation, every row labelled `Live` or `Simulated`. Page tabs, in-place edit mode and the AI assistant. **AG Grid** runs the merchant inbox.
+- **Bryntum Scheduler**: the family's timeline. One row per company: charges before and after the death, *told* and *closed* markers, the objection window, and the next year of charges that won't be taken.
+- **Render**: one-click Blueprint (`render.yaml`, Docker, free plan, health check `/api/status`).
+
+## Run it yourself
 
 ```bash
-cd backend && pip install -r requirements.txt
-cp ../.env.example ../.env        # optional: keys; leave blank for offline mode
-uvicorn app.main:app --port 8000  # API + built UI at http://localhost:8000 after `npm run build`
-cd ../frontend && npm install && npm run dev   # UI with hot reload on :5173
+python scripts/start_demo.py                 # everything, offline
+# or by hand
+cd backend && pip install -r requirements.txt && uvicorn app.main:app --port 8000
+cd frontend && npm install && npm run build  # the API serves frontend/dist
+docker build -t afterword . && docker run -p 8000:8000 --env-file .env afterword
 ```
 
-Or one container: `docker build -t afterword . && docker run -p 8000:8000 --env-file .env afterword`
+Environment (all optional):
 
-With no keys, it runs on a built-in emulator of the PayPal endpoints and an offline reader for the bundled specimen certificate. The header shows which mode is active.
+| Variable | Effect |
+|---|---|
+| `GEMINI_API_KEY` or `OPENAI_API_KEY` | Live certificate reading, letters, AG Studio assistant |
+| `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `DEMO_CLIENT_EMAIL` | Real PayPal sandbox instead of the emulator |
+| `AFTERWORD_OBJECTION_WINDOW` | Seconds before irreversible steps may run (demo default 30; production 259200) |
+| `PAYPAL_WEBHOOK_ID` | Turns on verified webhooks |
 
-### Real PayPal sandbox
+**Real sandbox.** Create a Personal sandbox account named exactly *Lakshmi Narayanan* and set the variables above. Run `python backend/scripts/sandbox_setup.py create`, approve each link as that buyer, run `finish`, then restart.
 
-1. In developer.paypal.com, go to Testing Tools → Sandbox Accounts and **create a Personal account named Lakshmi Narayanan**. The merchant agent checks this name.
-2. Put `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` and `DEMO_CLIENT_EMAIL` (that account's email) in `.env`.
-3. Run `python backend/scripts/sandbox_setup.py create`, open each printed link, and subscribe as the sandbox buyer.
-4. Run `python backend/scripts/sandbox_setup.py finish`, restart, and press *Start the demo again*.
-
-### Tests
-
-```bash
-cd backend && python -m pytest -q
-```
-
-## Testing instructions for judges
-
-1. Open the site. In **For families**, press *Fill in the demo family*, then *Continue*.
-2. Press *Use the demo specimen*. It's a fictional certificate stamped SPECIMEN. Every check passes, and the image is deleted. Open *How we checked the image*.
-3. Press *Use the demo export*. Afterword finds 8 things still charging or billing the account (one company isn't on Afterword yet). That's $73.92 already taken after the death, plus an annual antivirus renewal due in 5 days. Soonest charge first. It leaves a one-off purchase and a payment to the person's son alone.
-4. Press *Tell 7 companies*. Six companies with auto-close rules close within seconds, each showing *Receipt signed* and *Confirmed on PayPal*. Each one cancels in PayPal, refunds the post-death charge and writes to the family.
-5. Switch to **For businesses → The Daily Ledger**. This company reviews every case by hand. Open the notice, see PayPal's subscriber record match the certificate, and press *Approve all and close*.
-6. Back in **For families**, read the letter in English, हिन्दी, தமிழ் or తెలుగు, and download the PDF record.
-7. **For businesses → Audit trail → Verify the chain.**
-8. **Fraud demo.** Press *Start the demo again*, enter any name, and choose *Try an edited copy (fraud demo)*. This is Lakshmi's certificate with the name changed. It is blocked twice: the heat map lights up the edited line, and the network check finds the original. To see the network flag, run steps 1–2 first, then start a new case.
+**Tests.** `cd backend && python -m pytest -q`
 
 ## What's next
 
-- Removing saved payment methods (Vault payment tokens) in the same notice.
-- PayPal's own deceased-account process as an Afterword node.
-- An executor role across multiple estates.
-- Notices for banks and utilities, not just PayPal merchants.
+- Vault payment-token removal in the same notice.
+- PayPal's own deceased-account team as an Afterword node.
+- An executor role across estates.
+- Banks and utilities through the same signed notice.
 
 ## Team
 

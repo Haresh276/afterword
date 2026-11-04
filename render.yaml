@@ -15,3 +15,5 @@ services:
         sync: false
       - key: AFTERWORD_SEED_ON_START
         value: "1"
+      - key: AFTERWORD_OBJECTION_WINDOW
+        value: "30"
