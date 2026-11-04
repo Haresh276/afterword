@@ -83,12 +83,17 @@ def assess(case_id: str) -> dict:
             o["certificate_phash"] and me["certificate_phash"] and
             forensics.hamming(o["certificate_phash"], me["certificate_phash"]) <= forensics.PHASH_MATCH)
         same_reg = _norm_reg(o["registration_number"]) and _norm_reg(o["registration_number"]) == _norm_reg(me["registration_number"])
+        # Only a case that actually got through can poison this one. If the other attempt was itself
+        # blocked (an edited copy, say), the genuine family must not be locked out by the fraudster.
+        passed = o["status"] in ("VERIFIED", "NOTIFIED", "CLOSED")
         if same_doc and not same_person:
-            flags.append({"kind": "certificate_reused", "critical": True, "case": o["id"],
-                          "detail": f"the same certificate image was used for {o['deceased_name']} in another case"})
+            flags.append({"kind": "certificate_reused" if passed else "copy_attempt_blocked", "critical": passed, "case": o["id"],
+                          "detail": f"the same certificate image was used for {o['deceased_name']} in another case" if passed else
+                          f"someone tried to use a copy of this certificate for {o['deceased_name']}; that attempt was blocked"})
         if same_reg and not same_person:
-            flags.append({"kind": "registration_reused", "critical": True, "case": o["id"],
-                          "detail": f"registration {me['registration_number']} belongs to {o['deceased_name']}"})
+            flags.append({"kind": "registration_reused" if passed else "registration_attempt_blocked", "critical": passed, "case": o["id"],
+                          "detail": f"registration {me['registration_number']} belongs to {o['deceased_name']}" if passed else
+                          f"registration {me['registration_number']} was also given for {o['deceased_name']} in an attempt that was blocked"})
         if same_person and o.get("objected_at"):
             flags.append({"kind": "subject_objected", "critical": True, "case": o["id"],
                           "detail": f"{o['deceased_name']} answered an earlier report personally and said they are alive"})

@@ -205,3 +205,23 @@ textarea { resize: vertical; }
 .lab > .card + .card, .lab > .card { margin: 0; }
 .studio-wrap { height: calc(100vh - 210px); min-height: 640px; border-radius: 10px; overflow: hidden; }
 .studio-bar { margin-bottom: 10px; }
+
+/* ---------- Bryntum timeline */
+.timeline { margin-top: 14px; }
+.tl-host { height: 420px; margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--ink-2); margin-top: 8px; }
+.legend .dot { display: inline-block; width: 9px; height: 9px; transform: rotate(45deg); margin-right: 6px; border-radius: 1px; }
+.dot.aw-before { background: #8b9593; } .dot.aw-after { background: #c0392b; } .dot.aw-told { background: #5a4e6e; }
+.dot.aw-closed { background: #2f5d52; } .dot.aw-future { background: transparent; border: 1.5px dashed #2f8f80; } .dot.aw-risk { background: #d4a72c; }
+.tl-host .aw-sub, .aw-sub { font-size: 11px; color: var(--ink-3); }
+.tl-host .b-sch-event-wrap.aw-future .b-sch-event { opacity: .45; }
+.tl-host .b-sch-event-wrap.aw-future.aw-risk .b-sch-event { opacity: 1; }
+.tl-host .b-grid-header, .tl-host .b-grid-cell { font-family: var(--sans); }
+.tl-host .tr-death { background: rgba(151, 58, 58, .12); border-left: 2px solid var(--rose); }
+.tl-host .tr-today { border-left: 2px dashed var(--ink-3); }
+.tl-host .tr-window { background: rgba(90, 78, 110, .14); }
+.tl-host .aw-future:not(.aw-risk), .tl-host .b-sch-event-wrap.aw-future:not(.aw-risk) { opacity: .3; }
+.tl-host .aw-told, .tl-host .aw-closed { z-index: 3; }
+.dot.aw-death { background: var(--rose); width: 2px; height: 12px; transform: none; }
+.dot.aw-today { border-left: 2px dashed var(--ink-3); width: 0; height: 12px; transform: none; background: none; }
+.tl-host .tr-death { border-left: 3px solid var(--rose); }

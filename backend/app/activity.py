@@ -173,6 +173,9 @@ def analyse(rows: list[dict], date_of_death: str) -> dict:
             "charges_after_death": after, "owed_back": round(sum(a["amount"] for a in after), 2),
             "reason": reason, "selected": 1 if kind in ("SUBSCRIPTION", "INVOICE") else 0,
             "last_date": items[-1]["date"].isoformat(),
+            # dates and amounts only (no descriptions), for the family's timeline
+            "history": [{"date": i["date"].isoformat(), "amount": abs(i["gross"]), "after_death": i["date"] > dod} for i in paid]
+                       + [{"date": i["date"].isoformat(), "amount": abs(i["gross"]), "invoice": True} for i in invoices],
         })
 
     order = {"SUBSCRIPTION": 0, "INVOICE": 1, "ONE_OFF": 2, "PERSONAL": 3}

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense } from 'react'
 import { api, fmtDate, fmtWait, LANGS, money, pct, secondsUntil } from './api'
+const Timeline = lazy(() => import('./Timeline'))
 
 const daysTo = (iso) => Math.max(0, Math.round((new Date(iso + 'T00:00:00') - new Date(new Date().toDateString())) / 864e5))
 const RELATIONS = ['daughter', 'son', 'spouse', 'partner', 'parent', 'sibling', 'grandchild', 'executor', 'friend']
@@ -375,6 +377,7 @@ export default function Family({ notify, status }) {
 
       <Step n="3" title="What's still charging them" done={!!c?.findings?.length} locked={!c?.certificate_sha256}>
         {c?.certificate_sha256 && <Activity c={c} refresh={refresh} notify={notify} />}
+        {c?.findings?.length > 0 && <Suspense fallback={null}><Timeline caseId={c.id} version={`${c.status}-${c.totals.closed}-${c.totals.paused}`} /></Suspense>}
       </Step>
 
       <Step n="4" title="Tell them, once" done={sent} locked={!c?.findings?.length}>

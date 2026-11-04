@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS findings (
     charges_after_death TEXT, -- JSON [{date, amount, transaction_id}]
     owed_back REAL, reason TEXT, selected INTEGER,
     period_days REAL, next_charge TEXT, yearly_cost REAL, price_note TEXT,
+    history TEXT,             -- JSON [{date, amount, after_death}] for the timeline
     notice_id TEXT, status TEXT  -- FOUND | NOTIFIED | RECEIVED | CLOSED | NOT_ON_NETWORK
 );
 -- ---------------------------------------------------------------- merchant side
@@ -104,7 +105,7 @@ CREATE TRIGGER IF NOT EXISTS audit_append_only_d BEFORE DELETE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 """
 
-JSON_COLS = {"network", "receipt", "confirmation", "extraction", "verification", "references_json", "charges_after_death", "payload",
+JSON_COLS = {"history", "network", "receipt", "confirmation", "extraction", "verification", "references_json", "charges_after_death", "payload",
              "review", "outcome", "params", "policy_checks", "detail"}
 TABLES = ("cases", "findings", "merchants", "merchant_customers", "merchant_invoices", "notices", "pending_actions", "outbox")
 

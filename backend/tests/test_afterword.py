@@ -331,3 +331,27 @@ def test_studio_ai_shim_round_trips_tools(monkeypatch):
                                        "response.output_item.added", "response.function_call_arguments.delta",
                                        "response.output_item.done", "response.completed"]
     assert ev[-1]["response"]["output"][1]["call_id"] == "c2"
+
+
+def test_timeline_shows_history_and_prevented_charges(c):
+    k = _case(c)
+    c.post(f"/api/cases/{k['id']}/activity", data={"use_sample": "1"})
+    c.post(f"/api/cases/{k['id']}/notify")
+    t = c.get(f"/api/cases/{k['id']}/timeline").json()
+    kinds = {e["kind"] for e in t["events"]}
+    assert {"before", "after", "told", "closed", "future", "invoice"} <= kinds
+    assert all(e["stopped"] for e in t["events"] if e["kind"] == "future" and e["resourceId"] in
+               {f["id"] for f in c.get(f"/api/cases/{k['id']}").json()["findings"] if f["status"] == "CLOSED"})
+    assert any(r["id"] == "death" for r in t["timeRanges"])
+
+
+def test_blocked_forgery_does_not_lock_out_the_real_family(c):
+    bad = c.post("/api/cases", json={"claimant_name": "Ravi K", "claimant_email": "ravi@example.com", "relationship": "friend"}).json()
+    bad = c.post(f"/api/cases/{bad['id']}/certificate", data={"use_specimen": "forged"}).json()
+    assert bad["status"] != "VERIFIED"                     # the forgery is stopped by forensics
+    k = _case(c)                                           # then the real family arrives
+    assert k["status"] == "VERIFIED"
+    kinds = {f["kind"]: f["critical"] for f in k["network"]["flags"]}
+    assert kinds.get("copy_attempt_blocked") is False      # they are told, not blocked
+    again = c.post(f"/api/cases/{bad['id']}/certificate", data={"use_specimen": "forged"}).json()
+    assert "certificate_reused" in {f["kind"] for f in again["network"]["flags"]}   # and the forger now also hits the network

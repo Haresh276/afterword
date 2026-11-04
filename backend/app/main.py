@@ -300,6 +300,55 @@ def notify(cid: str):
     return get_case(cid)
 
 
+@app.get("/api/cases/{cid}/timeline")
+def timeline(cid: str):
+    """Bryntum Scheduler data: one row per company, charges before and after the death, what Afterword
+    did and when, and every charge over the next year that won't be taken."""
+    from datetime import date as _date, datetime as _dt, timedelta as _td
+    c = get_case(cid)
+    if not c.get("date_of_death"):
+        return {"resources": [], "events": [], "timeRanges": []}
+    resources, events = [], []
+    today = _dt.now().date()
+    for f in c["findings"]:
+        if f["kind"] not in ("SUBSCRIPTION", "INVOICE"):
+            continue
+        rid = f["id"]
+        resources.append({"id": rid, "name": f["merchant_name"], "kind": f["kind"].title(),
+                          "cadence": f["cadence"] or "", "status": f["status"]})
+        for i, h in enumerate(f.get("history") or []):
+            kind = "invoice" if h.get("invoice") else "after" if h.get("after_death") else "before"
+            events.append({"id": f"{rid}-h{i}", "resourceId": rid, "startDate": h["date"], "duration": 0, "kind": kind,
+                           "name": f"${h['amount']:.2f}" + (" invoice, unpaid" if kind == "invoice" else " after the death" if kind == "after" else ""),
+                           "eventColor": {"before": "gray", "after": "red", "invoice": "orange"}[kind]})
+        n = f.get("notice") or {}
+        if n.get("received_at"):
+            events.append({"id": f"{rid}-told", "resourceId": rid, "startDate": n["received_at"], "duration": 0, "kind": "told",
+                           "name": "Told by Afterword", "eventColor": "violet"})
+        if n.get("closed_at"):
+            refunded = f.get("refunded") or 0
+            events.append({"id": f"{rid}-closed", "resourceId": rid, "startDate": n["closed_at"], "duration": 0, "kind": "closed",
+                           "name": "Closed" + (f", ${refunded:.2f} refunded" if refunded else ""), "eventColor": "green"})
+        if f["kind"] == "SUBSCRIPTION" and f.get("next_charge") and f.get("period_days"):
+            stopped = f["status"] in ("CLOSED", "PAUSED")
+            d, k = _date.fromisoformat(f["next_charge"]), 0
+            while d <= today + _td(days=365) and k < 24:
+                events.append({"id": f"{rid}-n{k}", "resourceId": rid, "startDate": d.isoformat(), "duration": 0, "kind": "future",
+                               "stopped": stopped, "name": f"${f['typical_amount']:.2f} " + ("won't be taken" if stopped else "will be taken"),
+                               "eventColor": "teal" if stopped else "amber"})
+                d += _td(days=round(f["period_days"]))
+                k += 1
+    ranges = [{"id": "death", "name": "", "startDate": c["date_of_death"], "cls": "tr-death"},
+              {"id": "today", "name": "", "startDate": today.isoformat(), "cls": "tr-today"}]
+    if c.get("objection_deadline") and c["status"] != "OBJECTED":
+        start = min((f["notice"]["received_at"] for f in c["findings"] if (f.get("notice") or {}).get("received_at")), default=None)
+        if start:
+            ranges.append({"id": "window", "name": "", "startDate": start, "endDate": c["objection_deadline"], "cls": "tr-window"})
+    hist = [e["startDate"] for e in events]
+    return {"resources": resources, "events": events, "timeRanges": ranges,
+            "start": (_date.fromisoformat(c["date_of_death"][:10]) - _td(days=100)).isoformat(), "end": (today + _td(days=370)).isoformat()}
+
+
 # ------------------------------------------------------------------ proof of life ("I'm alive")
 def _by_token(token: str) -> dict:
     rows = db.query("SELECT * FROM cases WHERE objection_token=?", (token,))
