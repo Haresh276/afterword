@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import activity, certificate, closure, db, forensics, lab, letters, llm, merchant, notices, seed
+from . import activity, certificate, closure, db, forensics, insights, lab, letters, llm, merchant, notices, seed, studio_ai
 from . import paypal_gateway as pp
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -495,6 +495,21 @@ def audit(limit: int = 300):
 @app.get("/api/audit/verify")
 def audit_verify():
     return db.verify_audit_chain()
+
+
+# =============================================================================== AG Studio
+@app.get("/api/insights")
+def insights_rows():
+    return insights.rows()
+
+
+@app.post("/api/ai/responses")
+async def ai_responses(request: Request):
+    """OpenAI Responses-API shim over the configured model, for AG Studio's AI assistant."""
+    if not llm.available():
+        raise HTTPException(503, "The AI assistant needs GEMINI_API_KEY (or OPENAI_API_KEY) on the server.")
+    body = await request.json()
+    return await asyncio.to_thread(studio_ai.respond, body)
 
 
 # =============================================================================== try to break it

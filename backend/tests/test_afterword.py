@@ -1,4 +1,5 @@
 """End-to-end and trust guarantees, offline (mock PayPal, no LLM)."""
+import json
 import os
 import tempfile
 
@@ -298,3 +299,35 @@ def test_red_team_lab_blocks_every_attack(c):
     c.post(f"/api/cases/{k['id']}/certificate", data={"use_specimen": "1"})
     assert c.get(f"/api/cases/{k['id']}").json()["status"] == "VERIFIED"
     assert not db.query("SELECT id FROM pending_actions WHERE status='PENDING'")
+
+
+def test_insights_rows_label_live_and_simulated(c):
+    k = _case(c)
+    c.post(f"/api/cases/{k['id']}/activity", data={"use_sample": "1"})
+    c.post(f"/api/cases/{k['id']}/notify")
+    r = c.get("/api/insights").json()
+    assert r["counts"]["notices"]["live"] == 7 and r["counts"]["notices"]["simulated"] > 150
+    assert {row["source"] for row in r["notices"]} == {"Live", "Simulated"}
+    assert c.get("/api/insights").json()["counts"] == r["counts"]          # deterministic history
+
+
+def test_studio_ai_shim_round_trips_tools(monkeypatch):
+    from types import SimpleNamespace
+    from app import studio_ai
+    schema = {"$defs": {"W": {"type": "object", "properties": {"kind": {"const": "bar"}, "child": {"$ref": "#/$defs/W"}},
+                              "additionalProperties": False}},
+              "type": "object", "properties": {"widget": {"$ref": "#/$defs/W"}, "note": {"type": ["string", "null"]}}}
+    clean = json.dumps(studio_ai.sanitize(schema))
+    assert "$ref" not in clean and "additionalProperties" not in clean and '"nullable": true' in clean
+    body = {"instructions": "be brief", "tools": [{"type": "function", "name": "add_widget", "parameters": schema}],
+            "input": [{"role": "user", "content": [{"type": "input_text", "text": "add a chart"}]},
+                      {"type": "function_call", "call_id": "c1", "name": "add_widget", "arguments": "{}"},
+                      {"type": "function_call_output", "call_id": "c1", "output": "ok"}]}
+    req = studio_ai.to_chat(body)
+    assert [m["role"] for m in req["messages"]] == ["system", "user", "assistant", "tool"]
+    msg = {"content": "Added.", "tool_calls": [{"id": "c2", "function": {"name": "add_widget", "arguments": '{"widget":{}}'}}]}
+    ev = studio_ai.to_events(msg, None, "m")
+    assert [e["type"] for e in ev] == ["response.output_item.added", "response.output_text.delta", "response.output_item.done",
+                                       "response.output_item.added", "response.function_call_arguments.delta",
+                                       "response.output_item.done", "response.completed"]
+    assert ev[-1]["response"]["output"][1]["call_id"] == "c2"

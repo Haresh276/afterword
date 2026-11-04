@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { AgGridReact } from 'ag-grid-react'
 import { themeQuartz } from 'ag-grid-community'
 import { api, fmtDate, money, pct } from './api'
 import Audit from './Audit'
+const Insights = lazy(() => import('./Insights'))
 
 const theme = themeQuartz.withParams({
   fontFamily: "'Public Sans', system-ui, sans-serif", foregroundColor: '#1d2626', headerTextColor: '#55615f',
@@ -103,7 +104,7 @@ function Notice({ id, onClose, notify, reload }) {
   )
 }
 
-export default function Merchant({ notify }) {
+export default function Merchant({ notify, status }) {
   const [merchants, setMerchants] = useState([])
   const [sel, setSel] = useState('m_dailyledger')
   const [rows, setRows] = useState([])
@@ -113,6 +114,7 @@ export default function Merchant({ notify }) {
   const reload = useCallback(async () => {
     try {
       setMerchants(await api.get('/api/merchants'))
+      if (sel === 'insights') return
       if (sel !== 'audit') setRows(await api.get(`/api/merchant/notices${sel === 'all' ? '' : `?merchant_id=${sel}`}`))
       setStats(sel.startsWith('m_') ? await api.get(`/api/merchants/${sel}/stats`) : null)
     } catch (e) { notify(e.message, true) }
@@ -144,10 +146,11 @@ export default function Merchant({ notify }) {
           </button>
         ))}
         <button aria-current={sel === 'all'} onClick={() => setSel('all')} style={{ marginTop: 8 }}>All notices</button>
+        <button aria-current={sel === 'insights'} onClick={() => setSel('insights')}>Network insights</button>
         <button aria-current={sel === 'audit'} onClick={() => setSel('audit')}>Audit trail</button>
       </nav>
       <section className="main">
-        {sel === 'audit' ? <Audit /> : (
+        {sel === 'insights' ? <Suspense fallback={<p className="muted">Loading AG Studio…</p>}><Insights status={status} /></Suspense> : sel === 'audit' ? <Audit /> : (
           <>
             <h1 style={{ fontSize: 30 }}>{m ? m.name : 'All notices'}</h1>
             <p className="muted" style={{ margin: '6px 0 0', maxWidth: '64ch' }}>

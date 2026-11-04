@@ -203,3 +203,5 @@ textarea { resize: vertical; }
 .pill.PAUSED { background: var(--dusk-soft); color: var(--dusk); }
 .pill.WITHDRAWN { background: var(--amber-soft); color: var(--amber); }
 .lab > .card + .card, .lab > .card { margin: 0; }
+.studio-wrap { height: calc(100vh - 210px); min-height: 640px; border-radius: 10px; overflow: hidden; }
+.studio-bar { margin-bottom: 10px; }

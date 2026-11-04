@@ -43,7 +43,7 @@ export default function App() {
           </div>
         )}
       </header>
-      {alive ? <Alive token={alive[1]} /> : world === 'family' ? <Family notify={notify} status={status} /> : world === 'lab' ? <Lab notify={notify} /> : <Merchant notify={notify} />}
+      {alive ? <Alive token={alive[1]} /> : world === 'family' ? <Family notify={notify} status={status} /> : world === 'lab' ? <Lab notify={notify} /> : <Merchant notify={notify} status={status} />}
       {toast && <div role="status" className={`toast ${toast.err ? 'err' : ''}`}>{toast.msg}</div>}
     </>
   )
