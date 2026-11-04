@@ -20,7 +20,7 @@ python scripts/start_demo.py          # installs what's missing, opens http://lo
 | Minute | Where | What to try |
 |---|---|---|
 | 0:00 | **For families** | *Fill in the demo family* → *Continue* → *Use the demo specimen*. Ten checks run on a fictional certificate stamped SPECIMEN, then the image is deleted. Open *How we checked the image*. |
-| 0:30 | Step 3 | *Use the demo export*. It finds 8 things still charging the account, $63.93 already taken after the death and $946.96 a year if nothing is done. The **Bryntum timeline** shows every charge before and after the death. |
+| 0:30 | Step 3 | *Use the demo export*. It finds 8 things still charging the account, what has already been taken since the death, and what a year of doing nothing would cost (about $950). The **Bryntum timeline** shows every charge before and after the death. |
 | 1:00 | Step 4 | *Tell 7 companies*. Billing is **paused** everywhere within seconds. A countdown shows the objection window (30 seconds in the demo, 72 hours in production). Open *See the email* to read what the account holder's own inbox received. Then wait: six companies cancel, refund, sign a receipt, and Afterword re-reads PayPal to confirm. The timeline turns green, and the year of charges that won't be taken fades out. |
 | 1:45 | **For businesses → The Daily Ledger** | A human-review merchant. Open the notice: PayPal's subscriber record is matched to the certificate, and each step is labelled reversible or irreversible. *Approve all*: the pause runs now, and the rest is scheduled for when the window ends. |
 | 2:15 | **For businesses → Network insights** | The **AG Studio** report covers network, PayPal steps and safety. Press *Edit this report* to drag in your own widgets. |

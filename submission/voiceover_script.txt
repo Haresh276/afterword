@@ -1,0 +1,14 @@
+Afterword demo: voice-over script (read over the captions; total under 3:00)
+
+0:05.4 to 0:09.9  (4s)  When someone dies, their subscriptions don't. Families lose 7 million hours a year chasing them.
+0:09.9 to 0:13.4  (4s)  Priya has lost her mother, Lakshmi. She tells Afterword once.
+0:13.4 to 0:21.3  (8s)  A vision model reads the certificate. Ten checks run, including image forensics, then the image is deleted.
+0:21.3 to 0:27.9  (7s)  From Lakshmi's PayPal export: eight things still charging her, and what has been taken since she died.
+0:27.9 to 0:32.9  (5s)  Every charge on one timeline (Bryntum): grey before her death, red after it.
+0:32.9 to 0:43.2  (10s)  One signed notice to seven companies. Each one's agent checks PayPal and pauses billing at once. Lakshmi's own inbox is asked: was this a mistake?
+0:43.2 to 0:54.8  (12s)  When the window passes, agents cancel and refund through the PayPal Agent Toolkit, sign a receipt, and Afterword re-reads PayPal to confirm.
+0:54.8 to 0:59.3  (4s)  A year of charges that will never be taken.
+0:59.3 to 1:16.5  (17s)  Businesses that review by hand see PayPal's record matched to the certificate. Every step is marked reversible or not. No AI moves money.
+1:16.5 to 1:34.3  (18s)  Across the network, AG Studio shows every notice, every PayPal step and every attack stopped. Its AI agent runs on Gemini.
+1:34.3 to 1:47.5  (13s)  Try to break it: nine live attacks, from forged certificates to prompt injection. Nine blocked.
+1:47.5 to 2:18.5  (31s)  And if someone reports a living person? One click from Lakshmi undoes every pause. No money moves, and the reporter is flagged.
