@@ -1,3 +1,7 @@
+# The PayPal Agent Toolkit is installed separately with --no-deps (see scripts/install.py and the Dockerfile):
+#   pip install --no-deps paypal-agent-toolkit==1.11.0
+# Its core needs only httpx, requests, pydantic and python-dotenv (listed here). The pinned langchain/crewai extras
+# are for integrations Afterword doesn't use, and they don't install on Python 3.13+.
 fastapi==0.*
 uvicorn[standard]
 python-multipart
@@ -7,7 +11,8 @@ pillow
 cryptography
 openai
 requests
-paypal-agent-toolkit==1.11.0
 python-dotenv
 pytest
 mcp>=2.3
+httpx>=0.26.0
+numpy

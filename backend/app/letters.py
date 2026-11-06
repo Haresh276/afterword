@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from . import llm
 
-LANGS = {"en": "English", "hi": "Hindi", "ta": "Tamil", "te": "Telugu", "es": "Spanish", "fr": "French"}
+LANGS = {"en": "English", "es": "Spanish", "zh": "Simplified Chinese", "vi": "Vietnamese", "hi": "Hindi", "ta": "Tamil", "te": "Telugu", "fr": "French"}
+OFFLINE = ("en", "es", "hi")  # languages with a hand-written template when no model key is set
 
 STYLE = """Write for a bereaved family member. Plain words, no corporate phrases ("we apologize for any
 inconvenience", "valued customer"), no exclamation marks, no emojis, no religious assumptions.
@@ -12,13 +13,21 @@ Lead with what has been done, give exact amounts and dates, say clearly that not
 from them. Under 120 words. Return only the letter text."""
 
 
-def _day(iso: str | None) -> str:
+ES_MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+def _day(iso: str | None, lang: str = "en") -> str:
+    """US style for English ('October 7, 2026'), '7 de octubre de 2026' for Spanish, ISO-ish otherwise."""
     from datetime import date
     try:
         d = date.fromisoformat((iso or "")[:10])
-        return f"{d.day} {d.strftime('%B %Y')}"
     except ValueError:
         return iso or ""
+    if lang == "es":
+        return f"{d.day} de {ES_MONTHS[d.month - 1]} de {d.year}"
+    if lang == "hi":
+        return d.strftime("%d-%m-%Y")
+    return f"{d.strftime('%B')} {d.day}, {d.year}"
 
 
 def _money(amount: float, cur: str = "USD") -> str:
@@ -53,6 +62,16 @@ def merchant_reply(merchant: dict, notice: dict, outcome: dict) -> str:
     parts += ["", "You don't need to do anything else.", "", f"{merchant['name']}"]
     return "\n".join(parts)
 
+
+ES_TEMPLATE = """Querida {first}:
+
+Sentimos mucho la pérdida de {deceased}.
+
+Avisamos a {n} empresas. {closed} ya lo cerraron todo: no se cobrará nada más, y se están devolviendo a la cuenta de PayPal {refund} cobrados después del {date}.
+{merchants}{pending_line}
+No tiene que llamar a nadie.
+
+Afterword"""
 
 HI_TEMPLATE = """{first} जी,
 
@@ -90,8 +109,20 @@ def family_closure(case: dict, findings: list[dict]) -> str:
                 str(facts))
         except Exception:  # noqa: BLE001
             pass
-    pending = len(facts["still_open"]) + len(offline)
+    if lang == "es":
+        facts["date"] = _day(case.get("date_of_death"), "es")
+        ms = "".join(f"• {f['merchant_name']}: " + ("factura abierta cancelada, no se debe nada" if f["kind"] == "INVOICE"
+                     else "cancelado" + (f", {_money(f.get('refunded') or 0)} reembolsados" if f.get("refunded") else "")) + "\n"
+                     for f in closed)
+        parts = []
+        if facts["still_open"]:
+            parts.append(f"{', '.join(facts['still_open'])} todavía lo están revisando; le avisaremos en cuanto respondan.")
+        if offline:
+            parts.append(f"{', '.join(facts['not_on_network'])} aún no está en Afterword. Le dejamos el correo escrito; solo tiene que enviarlo.")
+        return ES_TEMPLATE.format(first=first, deceased=facts["deceased"], n=facts["n"], closed=facts["closed"], refund=facts["refund"],
+                                  date=facts["date"], merchants=("\n" + ms if ms else ""), pending_line=("\n" + " ".join(parts) + "\n") if parts else "")
     if lang == "hi":
+        facts["date"] = _day(case.get("date_of_death"), "hi")
         parts = []
         if facts["still_open"]:
             parts.append(f"{', '.join(facts['still_open'])} अभी जाँच कर रहे हैं; जवाब आते ही आपको बता देंगे।")
@@ -120,7 +151,7 @@ def offline_email(case: dict, finding: dict) -> str:
     """For merchants not on the Afterword network: a ready-to-send email the family can forward."""
     return (f"Subject: Account holder has died: please cancel and refund\n\n"
             f"Hello {finding['merchant_name']},\n\n"
-            f"{case['deceased_name']} ({case['deceased_email']}) died on {case['date_of_death']}. "
+            f"{case['deceased_name']} ({case['deceased_email']}) died on {_day(case['date_of_death'])}. "
             f"Please cancel their account and any recurring PayPal payments"
             + (f" (subscription {', '.join(finding['references_json']['subscription_ids'])})" if finding['references_json']['subscription_ids'] else "")
             + (f", and refund the {len(finding['charges_after_death'])} charge(s) taken after that date "

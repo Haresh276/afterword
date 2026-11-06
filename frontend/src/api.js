@@ -35,7 +35,10 @@ export const fmtDate = (iso) => {
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
 }
 
-export const LANGS = [['en', 'English'], ['hi', 'हिन्दी'], ['ta', 'தமிழ்'], ['te', 'తెలుగు']]
+export const LANGS = [['en', 'English'], ['es', 'Español'], ['zh', '中文'], ['vi', 'Tiếng Việt'], ['hi', 'हिन्दी'], ['ta', 'தமிழ்'], ['te', 'తెలుగు']]
+export const OFFLINE_LANGS = ['en', 'es', 'hi']
+export const runtime = { live: false } // set from /api/status; languages without a template need the model
+export const langLabel = (k, l) => (runtime.live || OFFLINE_LANGS.includes(k) ? l : `${l} (needs AI key)`)
 
 export function secondsUntil(iso, now = Date.now()) {
   return iso ? Math.max(0, Math.round((new Date(iso).getTime() - now) / 1000)) : 0

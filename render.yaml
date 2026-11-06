@@ -1,19 +1,22 @@
+# Render Blueprint: Dashboard > New > Blueprint > pick this repo > paste the 3 secrets > Deploy Blueprint.
 services:
   - type: web
     name: afterword
     runtime: docker
     plan: free
+    region: oregon
     healthCheckPath: /api/status
+    autoDeploy: true
     envVars:
-      - key: GEMINI_API_KEY
+      - key: GEMINI_API_KEY          # Google AI Studio key: certificate reading, letters, AG Studio assistant
         sync: false
-      - key: PAYPAL_CLIENT_ID
+      - key: PAYPAL_CLIENT_ID        # PayPal sandbox app: powers "PayPal sandbox proof > Run live check"
         sync: false
       - key: PAYPAL_CLIENT_SECRET
-        sync: false
-      - key: DEMO_CLIENT_EMAIL
         sync: false
       - key: AFTERWORD_SEED_ON_START
         value: "1"
       - key: AFTERWORD_OBJECTION_WINDOW
         value: "30"
+      - key: AFTERWORD_PAYPAL_MODE   # the shared demo stays on the simulator so every judge can run it
+        value: "mock"

@@ -29,7 +29,11 @@ from . import db
 
 CLIENT_ID = os.getenv("PAYPAL_CLIENT_ID", "").strip()
 CLIENT_SECRET = os.getenv("PAYPAL_CLIENT_SECRET", "").strip()
-MODE = "sandbox" if CLIENT_ID and CLIENT_SECRET else "mock"
+HAS_KEYS = bool(CLIENT_ID and CLIENT_SECRET)
+# The shared demo runs on the emulator unless AFTERWORD_PAYPAL_MODE=sandbox (set by scripts/sandbox_run.py),
+# because a hosted demo on real sandbox subscriptions would be used up by the first judge who runs it.
+# With keys present, the live PayPal check (/api/paypal/live-check) still talks to the real sandbox.
+MODE = "sandbox" if HAS_KEYS and os.getenv("AFTERWORD_PAYPAL_MODE", "").lower() == "sandbox" else "mock"
 APPROVAL_TTL_HOURS = int(os.getenv("AFTERWORD_APPROVAL_TTL_HOURS", "24"))
 
 MONEY_TOOLS = {"cancel_subscription", "refund_capture", "cancel_sent_invoice", "suspend_subscription", "activate_subscription"}
@@ -53,18 +57,38 @@ class _Toolkit:
         if request_id:
             headers["PayPal-Request-Id"] = request_id
         r = requests.request(method, f"{client.base_url}{uri}", headers=headers, json=payload, timeout=30)
+        debug = r.headers.get("paypal-debug-id", "")
         if r.status_code >= 400:
-            raise RuntimeError(f"PayPal {r.status_code}: {r.text[:600]}")
-        return r.json() if r.text else {}
+            err = RuntimeError(f"PayPal {r.status_code}: {r.text[:600]}")
+            err.status, err.debug_id = r.status_code, debug  # type: ignore[attr-defined]
+            raise err
+        out = r.json() if r.text else {}
+        if isinstance(out, dict):
+            out["_paypal_debug_id"] = debug
+        return out
 
     def run(self, method: str, params: dict, request_id: str | None = None) -> dict:
         if method == "refund_capture":
             body = {"note_to_payer": params.get("note", "")[:255]}
             if params.get("amount"):
                 body["amount"] = {"value": f"{float(params['amount']):.2f}", "currency_code": params["currency"]}
-            return self._rest("POST", f"/v2/payments/captures/{params['capture_id']}/refund", body, request_id)
+            try:
+                return self._rest("POST", f"/v2/payments/captures/{params['capture_id']}/refund", body, request_id)
+            except RuntimeError as exc:  # some subscription payments are v1 sales, not v2 captures
+                if getattr(exc, "status", 0) != 404:
+                    raise
+                sale = {"amount": {"total": body["amount"]["value"], "currency": body["amount"]["currency_code"]}} if "amount" in body else {}
+                out = self._rest("POST", f"/v1/payments/sale/{params['capture_id']}/refund", sale, request_id)
+                return {**out, "status": (out.get("state") or "").upper() or out.get("status"), "api": "v1/sale"}
         if method == "get_capture":
-            return self._rest("GET", f"/v2/payments/captures/{params['capture_id']}")
+            try:
+                return self._rest("GET", f"/v2/payments/captures/{params['capture_id']}")
+            except RuntimeError as exc:
+                if getattr(exc, "status", 0) != 404:
+                    raise
+                out = self._rest("GET", f"/v1/payments/sale/{params['capture_id']}")
+                state = (out.get("state") or "").lower()
+                return {**out, "status": {"refunded": "REFUNDED", "partially_refunded": "PARTIALLY_REFUNDED", "completed": "COMPLETED"}.get(state, state.upper())}
         if method in ("suspend_subscription", "activate_subscription"):  # REST: the Python toolkit has no tool for these
             verb = "suspend" if method == "suspend_subscription" else "activate"
             return self._rest("POST", f"/v1/billing/subscriptions/{params['subscription_id']}/{verb}",
@@ -74,7 +98,18 @@ class _Toolkit:
                                      f"?start_time={params['start_time']}&end_time={params['end_time']}")
         if method == "create_invoice_draft":
             return self._rest("POST", "/v2/invoicing/invoices", params)
-        raw = self.api.run(method, params)
+        try:
+            raw = self.api.run(method, params)
+        except Exception as exc:  # noqa: BLE001
+            # The toolkit serialises unset optional fields as null. If PayPal ever rejects that on a create
+            # call, retry the same payload (without nulls) through the toolkit's own authenticated client.
+            code = getattr(getattr(exc, "response", None), "status_code", 0)
+            uri = {"create_product": "/v1/catalogs/products", "create_subscription_plan": "/v1/billing/plans",
+                   "create_subscription": "/v1/billing/subscriptions"}.get(method)
+            if uri and code in (400, 422):
+                return {**self._rest("POST", uri, params), "_via": "rest-fallback"}
+            body = getattr(getattr(exc, "response", None), "text", "")[:600]
+            raise RuntimeError(f"PayPal {code or ''} {method}: {body or exc}") from exc
         try:
             return json.loads(raw) if isinstance(raw, str) and raw else (raw if isinstance(raw, dict) else {})
         except ValueError:
@@ -201,6 +236,13 @@ class _Mock:
 
 
 _transport: Any = None
+
+
+def live() -> "_Toolkit":
+    """A real-sandbox client regardless of MODE (for the live check and the sandbox run)."""
+    if not HAS_KEYS:
+        raise RuntimeError("Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET first.")
+    return _Toolkit()
 
 
 def transport():

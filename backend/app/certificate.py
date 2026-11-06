@@ -50,7 +50,7 @@ def _norm(name: str) -> list[str]:
 
 
 def names_match(a: str, b: str) -> bool:
-    """Order-insensitive, tolerant of initials and middle names: 'S. Lakshmi Narayanan' ~ 'Lakshmi Narayanan'."""
+    """Order-insensitive, tolerant of initials and middle names: 'Eleanor M. Hayes' ~ 'Eleanor Hayes'."""
     ta, tb = set(_norm(a)), set(_norm(b))
     if not ta or not tb:
         return False

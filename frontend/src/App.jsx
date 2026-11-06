@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api } from './api'
+import { api, runtime } from './api'
 import Family from './Family'
 import Merchant from './Merchant'
 import Lab from './Lab'
@@ -16,7 +16,7 @@ export default function App() {
     setTimeout(() => setToast(null), err ? 6000 : 3200)
   }, [])
 
-  useEffect(() => { api.get('/api/status').then(setStatus).catch(() => {}) }, [])
+  useEffect(() => { api.get('/api/status').then((s) => { runtime.live = !!s.llm_live; setStatus(s) }).catch(() => {}) }, [])
   useEffect(() => { if (!alive) history.replaceState(null, '', { merchant: '#business', lab: '#lab' }[world] || '#') }, [world, alive])
 
   return (

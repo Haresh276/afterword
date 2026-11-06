@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { lazy, Suspense } from 'react'
-import { api, fmtDate, fmtWait, LANGS, money, pct, secondsUntil } from './api'
+import { api, fmtDate, fmtWait, langLabel, LANGS, money, OFFLINE_LANGS, pct, runtime, secondsUntil } from './api'
 const Timeline = lazy(() => import('./Timeline'))
 
 const daysTo = (iso) => Math.max(0, Math.round((new Date(iso + 'T00:00:00') - new Date(new Date().toDateString())) / 864e5))
@@ -21,7 +21,7 @@ function Step({ n, title, done, locked, children }) {
 
 function About({ onStart, busy }) {
   const [f, setF] = useState({ claimant_name: '', claimant_email: '', relationship: 'daughter', language: 'en', deceased_email: '' })
-  const demo = () => setF({ claimant_name: 'Priya Narayanan', claimant_email: 'priya.narayanan@example.com', relationship: 'daughter',
+  const demo = () => setF({ claimant_name: 'Rachel Hayes', claimant_email: 'rachel.hayes@example.com', relationship: 'daughter',
     language: 'en', deceased_email: '' })
   const ok = f.claimant_name.trim() && /.+@.+\..+/.test(f.claimant_email)
   return (
@@ -32,7 +32,7 @@ function About({ onStart, busy }) {
         <div><label className="f" htmlFor="rel">They were your</label>
           <select id="rel" value={f.relationship} onChange={(e) => setF({ ...f, relationship: e.target.value })}>{RELATIONS.map((r) => <option key={r}>{r}</option>)}</select></div>
         <div><label className="f" htmlFor="lang">Write to me in</label>
-          <select id="lang" value={f.language} onChange={(e) => setF({ ...f, language: e.target.value })}>{LANGS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
+          <select id="lang" value={f.language} onChange={(e) => setF({ ...f, language: e.target.value })}>{LANGS.map(([k, l]) => <option key={k} value={k} disabled={!runtime.live && !OFFLINE_LANGS.includes(k)}>{langLabel(k, l)}</option>)}</select></div>
         <div className="wide"><label className="f" htmlFor="de">Their PayPal email, if you know it</label>
           <input id="de" type="email" placeholder="We can also read it from their PayPal activity export" value={f.deceased_email} onChange={(e) => setF({ ...f, deceased_email: e.target.value })} /></div>
       </div>
@@ -307,7 +307,7 @@ function Letter({ c, notify }) {
     <>
       <div className="row" style={{ marginBottom: 14 }}>
         <label className="f" htmlFor="ll" style={{ margin: 0 }}>Language</label>
-        <select id="ll" style={{ width: 'auto' }} value={lang} onChange={(e) => setLang(e.target.value)}>{LANGS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+        <select id="ll" style={{ width: 'auto' }} value={lang} onChange={(e) => setLang(e.target.value)}>{LANGS.map(([k, l]) => <option key={k} value={k} disabled={!runtime.live && !OFFLINE_LANGS.includes(k)}>{langLabel(k, l)}</option>)}</select>
         <span className="grow" />
         <a className="btn" href={`/api/cases/${c.id}/record.pdf`} target="_blank" rel="noreferrer">Download the record (PDF)</a>
       </div>

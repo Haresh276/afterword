@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import activity, certificate, closure, db, forensics, insights, lab, letters, llm, merchant, notices, seed, studio_ai
+from . import activity, certificate, closure, db, forensics, insights, lab, letters, llm, merchant, notices, paypal_proof, seed, studio_ai
 from . import paypal_gateway as pp
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -76,7 +76,8 @@ def _404(what: str):
 
 @app.get("/api/status")
 def status():
-    return {"paypal_mode": pp.MODE, "llm": llm.model_name(), "llm_live": llm.available(),
+    return {"paypal_mode": pp.MODE, "paypal_keys": pp.HAS_KEYS, "llm": llm.model_name(), "llm_live": llm.available(),
+            "letter_languages_offline": list(letters.OFFLINE),
             "min_score": merchant.MIN_SCORE, "protocol": notices.PROTOCOL,
             "objection_window_seconds": OBJECTION_SECONDS, "objection_window_text": _window_text(OBJECTION_SECONDS)}
 
@@ -417,9 +418,9 @@ async def paypal_webhook(request: Request):
     hdr = {k: request.headers.get(k, "") for k in ("paypal-transmission-id", "paypal-transmission-time", "paypal-transmission-sig",
                                                      "paypal-cert-url", "paypal-auth-algo")}
     webhook_id = os.getenv("PAYPAL_WEBHOOK_ID", "")
-    if pp.MODE != "sandbox" or not webhook_id:
+    if not pp.HAS_KEYS or not webhook_id:
         raise HTTPException(400, "Webhook verification needs PayPal sandbox credentials and PAYPAL_WEBHOOK_ID")
-    res = pp.transport()._rest("POST", "/v1/notifications/verify-webhook-signature", {
+    res = pp.live()._rest("POST", "/v1/notifications/verify-webhook-signature", {
         "auth_algo": hdr["paypal-auth-algo"], "cert_url": hdr["paypal-cert-url"], "transmission_id": hdr["paypal-transmission-id"],
         "transmission_sig": hdr["paypal-transmission-sig"], "transmission_time": hdr["paypal-transmission-time"],
         "webhook_id": webhook_id, "webhook_event": body})
@@ -544,6 +545,17 @@ def audit(limit: int = 300):
 @app.get("/api/audit/verify")
 def audit_verify():
     return db.verify_audit_chain()
+
+
+# =============================================================================== PayPal proof
+@app.get("/api/paypal/evidence")
+def paypal_evidence():
+    return paypal_proof.evidence()
+
+
+@app.post("/api/paypal/live-check")
+def paypal_live_check():
+    return paypal_proof.live_check()
 
 
 # =============================================================================== AG Studio

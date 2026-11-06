@@ -26,7 +26,7 @@ def c():
 
 
 def _case(c, **kw):
-    body = {"claimant_name": "Priya Narayanan", "claimant_email": "priya@example.com", "relationship": "daughter",
+    body = {"claimant_name": "Rachel Hayes", "claimant_email": "rachel@example.com", "relationship": "daughter",
             "deceased_email": seed.DECEASED["email"], **kw}
     k = c.post("/api/cases", json=body).json()
     k = c.post(f"/api/cases/{k['id']}/certificate", data={"use_specimen": "1"}).json()
@@ -35,7 +35,7 @@ def _case(c, **kw):
 
 def test_certificate_read_and_not_stored(c):
     k = _case(c)
-    assert k["deceased_name"] == "Lakshmi Narayanan"
+    assert k["deceased_name"] == "Eleanor Hayes"
     assert k["date_of_death"] == seed.dod().isoformat()
     assert k["certificate_sha256"] and k["certificate_deleted_at"]
     assert k["status"] == "VERIFIED"
@@ -46,10 +46,10 @@ def test_activity_findings(c):
     k = c.post(f"/api/cases/{k['id']}/activity", data={"use_sample": "1"}).json()
     kinds = {f["merchant_name"]: (f["kind"], f["status"]) for f in k["findings"]}
     assert kinds["StreamBox"] == ("SUBSCRIPTION", "FOUND")
-    assert kinds["Harbor Language School"] == ("INVOICE", "FOUND")
+    assert kinds["Harbor Music School"] == ("INVOICE", "FOUND")
     assert kinds["GreenLeaf Seeds"] == ("SUBSCRIPTION", "NOT_ON_NETWORK")
-    assert kinds["Kalpana Silks"][0] == "ONE_OFF"
-    assert kinds["Arun Narayanan"][0] == "PERSONAL"
+    assert kinds["Willow & Thread Quilts"][0] == "ONE_OFF"
+    assert kinds["Daniel Hayes"][0] == "PERSONAL"
     sb = next(f for f in k["findings"] if f["merchant_name"] == "StreamBox")
     assert len(sb["charges_after_death"]) == 1 and sb["owed_back"] == 15.99
     assert k["verification"]["score"] == 1.0
@@ -61,7 +61,7 @@ def test_full_flow_auto_and_manual(c):
     c.post(f"/api/cases/{cid}/activity", data={"use_sample": "1"})
     k = c.post(f"/api/cases/{cid}/notify").json()
     st = {f["merchant_name"]: f["status"] for f in k["findings"] if f["notice_id"]}
-    assert st["StreamBox"] == "CLOSED" and st["Harbor Language School"] == "CLOSED"
+    assert st["StreamBox"] == "CLOSED" and st["Harbor Music School"] == "CLOSED"
     assert st["The Daily Ledger"] == "RECEIVED" or st["The Daily Ledger"] == "NOTIFIED" or st["The Daily Ledger"] != "CLOSED"
     # the manual merchant reviews and approves
     inbox = c.get("/api/merchant/notices", params={"merchant_id": "m_dailyledger"}).json()
@@ -134,10 +134,10 @@ def test_identity_mismatch_blocks_auto_close(c):
     k = _case(c)
     cid = k["id"]
     c.post(f"/api/cases/{cid}/activity", data={"use_sample": "1"})
-    c.patch(f"/api/cases/{cid}", json={"deceased_name": "Lakshmi Narayanan"})
+    c.patch(f"/api/cases/{cid}", json={"deceased_name": "Eleanor Hayes"})
     # someone else's subscription id slipped into the export
     t = pp.transport()
-    other = t.seed_subscription("StreamBox monthly", "Meera", "Iyer", "meera@example.com", 15.99, "USD", "2026-01-01T00:00:00Z")
+    other = t.seed_subscription("StreamBox monthly", "Susan", "Park", "susan.park@example.com", 15.99, "USD", "2026-01-01T00:00:00Z")
     f = next(x for x in c.get(f"/api/cases/{cid}").json()["findings"] if x["merchant_name"] == "StreamBox")
     refs = f["references_json"]; refs["subscription_ids"] = [other]
     db.update("findings", f["id"], {"references_json": refs})
@@ -196,7 +196,7 @@ def test_forged_certificate_blocked_by_forensics_and_network(c):
 
 def test_sibling_duplicate_is_linked_not_blocked(c):
     _case(c)
-    k2 = c.post("/api/cases", json={"claimant_name": "Arun Narayanan", "claimant_email": "arun@example.com", "relationship": "son"}).json()
+    k2 = c.post("/api/cases", json={"claimant_name": "Daniel Hayes", "claimant_email": "daniel@example.com", "relationship": "son"}).json()
     k2 = c.post(f"/api/cases/{k2['id']}/certificate", data={"use_specimen": "1"}).json()
     assert k2["status"] == "VERIFIED"
     assert k2["verification"]["network"]["links"]
@@ -236,7 +236,7 @@ def _sub_status(mid):
 def test_pause_now_irreversible_waits_for_window(c, monkeypatch):
     import time
     from app import merchant
-    k = _notify_with_window(c, monkeypatch, 1.5)
+    k = _notify_with_window(c, monkeypatch, 4)
     st = {f["merchant_name"]: f for f in k["findings"] if f["notice_id"]}
     assert st["StreamBox"]["status"] == "PAUSED" and st["StreamBox"]["notice"]["paused"]
     assert _sub_status("m_streambox") == "SUSPENDED"            # next charge already stopped
@@ -246,7 +246,7 @@ def test_pause_now_irreversible_waits_for_window(c, monkeypatch):
     cancel = db.query("SELECT id FROM pending_actions WHERE tool='cancel_subscription' AND merchant_id='m_streambox'")[0]["id"]
     with pytest.raises(pp.WindowOpen):
         pp.approve(cancel, "too-early")
-    time.sleep(1.6)
+    time.sleep(4.3)
     merchant.tick()  # the server ticker may already have done it
     k = c.get(f"/api/cases/{k['id']}").json()
     st = {f["merchant_name"]: f["status"] for f in k["findings"] if f["notice_id"]}
@@ -257,11 +257,11 @@ def test_pause_now_irreversible_waits_for_window(c, monkeypatch):
 def test_human_preapproval_runs_after_window(c, monkeypatch):
     import time
     from app import merchant
-    _notify_with_window(c, monkeypatch, 1.2)
+    _notify_with_window(c, monkeypatch, 4)
     nid = c.get("/api/merchant/notices", params={"merchant_id": "m_dailyledger"}).json()[0]["id"]
     out = c.post(f"/api/merchant/notices/{nid}/approve-all").json()
     assert out["status"] == "PAUSED" and len(out["scheduled"]) == 2
-    time.sleep(1.3)
+    time.sleep(4.3)
     merchant.tick()
     assert db.get("notices", nid)["status"] == "CLOSED"
 
@@ -270,7 +270,7 @@ def test_alive_objection_rolls_everything_back(c, monkeypatch):
     k = _notify_with_window(c, monkeypatch, 60)
     token = db.get("cases", k["id"])["objection_token"]
     info = c.get(f"/api/alive/{token}").json()
-    assert info["name"] == "Lakshmi Narayanan" and "StreamBox" in info["companies"]
+    assert info["name"] == "Eleanor Hayes" and "StreamBox" in info["companies"]
     c.post(f"/api/alive/{token}", json={"note": "I'm fine, this is my neighbour being cruel"})
     k = c.get(f"/api/cases/{k['id']}").json()
     assert k["status"] == "OBJECTED"
@@ -355,3 +355,27 @@ def test_blocked_forgery_does_not_lock_out_the_real_family(c):
     assert kinds.get("copy_attempt_blocked") is False      # they are told, not blocked
     again = c.post(f"/api/cases/{bad['id']}/certificate", data={"use_specimen": "forged"}).json()
     assert "certificate_reused" in {f["kind"] for f in again["network"]["flags"]}   # and the forger now also hits the network
+
+
+def test_live_paypal_check_shape(c, monkeypatch):
+    from app import paypal_proof
+    assert c.post("/api/paypal/live-check").json()["available"] is False      # no keys in tests
+    class Fake:
+        class api:
+            class _paypal_client:
+                @staticmethod
+                def get_access_token():
+                    return "tok"
+        def run(self, method, params, request_id=None):
+            return {"create_product": {"id": "PROD-1", "name": params.get("name")}, "create_subscription_plan": {"id": "P-1", "status": "ACTIVE"},
+                    "create_subscription": {"id": "I-1", "status": "APPROVAL_PENDING"},
+                    "show_subscription_details": {"id": "I-1", "status": "APPROVAL_PENDING",
+                                                  "subscriber": {"name": {"given_name": "Eleanor", "surname": "Hayes"}}}}[method]
+        def _rest(self, method, uri, payload=None, request_id=None):
+            return {"_paypal_debug_id": "f00"}
+    monkeypatch.setattr(pp, "HAS_KEYS", True)
+    monkeypatch.setattr(pp, "live", lambda: Fake())
+    paypal_proof._last.update(at=0, result=None)
+    r = c.post("/api/paypal/live-check").json()
+    assert r["ok"] and len(r["steps"]) == 6 and r["steps"][3]["id"] == "I-1"
+    assert c.get("/api/paypal/evidence").json()["recorded"] in (True, False)

@@ -3,6 +3,10 @@
 __pycache__/
 .pytest_cache/
 node_modules/
-frontend/dist/
 .venv/
 backend/samples/sandbox_state.json
+
+# sandbox run outputs that are not evidence
+evidence/dry_run.json
+evidence/DRY_RUN.md
+backend/samples/sandbox_demo.json

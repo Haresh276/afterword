@@ -32,7 +32,7 @@ def main():
     try:
         import fastapi, uvicorn, reportlab, cryptography, paypal_agent_toolkit  # noqa: F401,E401
     except ImportError:
-        run([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], BACKEND)
+        run([sys.executable, str(ROOT / "scripts" / "install.py")], ROOT)
     if not (FRONTEND / "dist" / "index.html").exists():
         if not shutil.which("npm"):
             sys.exit("The UI isn't built and npm isn't installed. Install Node.js 20+ and run again.")

@@ -21,10 +21,11 @@ SAMPLES.mkdir(exist_ok=True)
 SPECIMEN_PATH = SAMPLES / "specimen_certificate.png"
 SANDBOX_DATA = SAMPLES / "sandbox_demo.json"   # written by scripts/sandbox_setup.py
 
-DECEASED = {"given": "Lakshmi", "surname": "Narayanan", "name": "Lakshmi Narayanan",
-            "email": os.getenv("DEMO_DECEASED_EMAIL") or os.getenv("DEMO_CLIENT_EMAIL") or "lakshmi.narayanan@example.com",
-            "dob": "1951-03-14"}
-CLAIMANT = {"name": "Priya Narayanan", "email": "priya.narayanan@example.com", "relationship": "daughter"}
+DECEASED = {"given": "Eleanor", "surname": "Hayes", "name": "Eleanor Hayes",
+            "email": os.getenv("DEMO_DECEASED_EMAIL") or os.getenv("DEMO_CLIENT_EMAIL") or "eleanor.hayes@example.com",
+            "dob": "1948-05-21"}
+CLAIMANT = {"name": "Rachel Hayes", "email": "rachel.hayes@example.com", "relationship": "daughter"}
+FORGED_NAME, FORGED_DOB = "Diane Morrow", "1957-09-02"
 DAYS_SINCE_DEATH = 28
 
 MERCHANTS = [
@@ -34,7 +35,7 @@ MERCHANTS = [
     ("m_fitpulse", "FitPulse", "Fitness app", 9.99, 1, 30, "#7a5c3e", "sub"),
     ("m_dailyledger", "The Daily Ledger", "News", 12.00, 0, 0, "#5b4b6b", "sub"),
     ("m_bookshelf", "Bookshelf+", "Audiobooks", 14.95, 1, 40, "#6b4f3a", "sub"),
-    ("m_harbor", "Harbor Language School", "Lessons", 120.00, 1, 0, "#2f5d62", "invoice"),
+    ("m_harbor", "Harbor Music School", "Lessons", 120.00, 1, 0, "#2f5d62", "invoice"),
     ("m_safehome", "SafeHome Antivirus", "Software", 59.99, 1, 0, "#3e5a63", "annual"),
 ]
 PRICE_RISE = {"m_streambox": 13.99}   # StreamBox raised its price two charges ago (tests price-drift tolerance)
@@ -48,9 +49,9 @@ def dod() -> date:
 # ------------------------------------------------------------------------- specimen certificate
 def specimen_fields() -> dict:
     return {"document_type": "death certificate", "full_name": DECEASED["name"], "date_of_birth": DECEASED["dob"],
-            "date_of_death": dod().isoformat(), "place_of_death": "Chennai, Tamil Nadu",
-            "registration_number": f"AWD-{dod().year}-004117", "issuing_authority": "Afterword Demo Registry (fictional)",
-            "country": "India", "language": "Hindi and English", "signs_of_alteration": [], "is_specimen": True}
+            "date_of_death": dod().isoformat(), "place_of_death": "Columbus, Ohio",
+            "registration_number": f"AWD-{dod().year}-004117", "issuing_authority": "Afterword Demo Vital Records (fictional)",
+            "country": "United States", "language": "Spanish and English", "signs_of_alteration": [], "is_specimen": True}
 
 
 def make_specimen() -> bytes:
@@ -69,13 +70,13 @@ def make_specimen() -> bytes:
         T = S = L = V = WM = ImageFont.load_default()
     d.rectangle([30, 30, W - 30, H - 30], outline="#3d4a4a", width=4)
     d.rectangle([44, 44, W - 44, H - 44], outline="#9aa5a3", width=1)
-    d.text((W / 2, 110), "मृत्यु प्रमाण पत्र", font=T, fill="#1f2a2b", anchor="mm")
+    d.text((W / 2, 110), "CERTIFICADO DE DEFUNCIÓN", font=T, fill="#1f2a2b", anchor="mm")
     d.text((W / 2, 170), "CERTIFICATE OF DEATH", font=T, fill="#1f2a2b", anchor="mm")
     d.text((W / 2, 225), f["issuing_authority"], font=S, fill="#4b5757", anchor="mm")
-    rows = [("नाम / Name", f["full_name"]), ("जन्म तिथि / Date of birth", f["date_of_birth"]),
-            ("मृत्यु तिथि / Date of death", f["date_of_death"]), ("मृत्यु स्थान / Place of death", f["place_of_death"]),
-            ("पंजीकरण संख्या / Registration no.", f["registration_number"]),
-            ("पंजीकरण तिथि / Date of registration", (dod() + timedelta(days=3)).isoformat())]
+    rows = [("Nombre / Name of decedent", f["full_name"]), ("Fecha de nacimiento / Date of birth", f["date_of_birth"]),
+            ("Fecha de defunción / Date of death", f["date_of_death"]), ("Lugar de defunción / Place of death", f["place_of_death"]),
+            ("Número de registro / State file no.", f["registration_number"]),
+            ("Fecha de registro / Date filed", (dod() + timedelta(days=3)).isoformat())]
     y = 330
     for label, value in rows:
         d.text((110, y), label, font=L, fill="#5d6969")
@@ -93,7 +94,7 @@ def make_specimen() -> bytes:
 
 
 def make_forged() -> bytes:
-    """Demo of abuse: someone photographs Lakshmi's certificate and edits the name to cancel and get
+    """Demo of abuse: someone photographs Eleanor's certificate and edits the name to cancel and get
     refunds on another person's subscriptions. Saved as a phone photo (JPEG 75), edited, re-saved."""
     from PIL import Image, ImageDraw, ImageFont
 
@@ -107,12 +108,12 @@ def make_forged() -> bytes:
     except OSError:
         f = ImageFont.load_default()
     d.rectangle([105, 360, 900, 402], fill="#fbfaf6")
-    d.text((110, 364), "Meera Venkatesan", font=f, fill="#1f2a2b")
+    d.text((110, 364), FORGED_NAME, font=f, fill="#1f2a2b")
     out = io.BytesIO()
     img.save(out, "JPEG", quality=95)
     data = out.getvalue()
-    certificate.SPECIMENS[certificate.sha256(data)] = {**specimen_fields(), "full_name": "Meera Venkatesan",
-                                                       "date_of_birth": "1958-07-02"}
+    certificate.SPECIMENS[certificate.sha256(data)] = {**specimen_fields(), "full_name": FORGED_NAME,
+                                                       "date_of_birth": FORGED_DOB}
     return data
 
 
@@ -188,12 +189,12 @@ def seed_demo() -> dict:
                              "Gross": f"-{amt:.2f}", "To Email Address": m["paypal_email"], "Transaction ID": cid,
                              "Subscription Number": sid, "Item Title": f"{name} monthly"})
         else:
-            iid = sandbox["invoices"][mid] if sandbox else pp.transport().seed_invoice(email, amount, "USD", "Spanish lessons, block of 8")
+            iid = sandbox["invoices"][mid] if sandbox else pp.transport().seed_invoice(email, amount, "USD", "Piano lessons, block of 8")
             db.insert("merchant_invoices", {"id": db.new_id("inv"), "merchant_id": mid, "email": email, "paypal_invoice_id": iid,
-                                            "description": "Spanish lessons, block of 8", "amount": amount, "currency": "USD", "status": "UNPAID"})
+                                            "description": "Piano lessons, block of 8", "amount": amount, "currency": "USD", "status": "UNPAID"})
             rows.append({"Date": (death - timedelta(days=12)).strftime("%m/%d/%Y"), "Name": name, "Type": "Invoice Received",
                          "Status": "Unpaid", "Gross": f"-{amount:.2f}", "To Email Address": m["paypal_email"],
-                         "Transaction ID": "", "Invoice Number": iid, "Item Title": "Spanish lessons, block of 8"})
+                         "Transaction ID": "", "Invoice Number": iid, "Item Title": "Piano lessons, block of 8"})
 
     # a merchant that is not on the network: the family gets a ready-to-send email instead
     gname, gmail, gamt = OFF_NETWORK
@@ -202,15 +203,15 @@ def seed_demo() -> dict:
                      "Status": "Completed", "Gross": f"-{gamt:.2f}", "To Email Address": gmail, "Transaction ID": f"GL{k}8823AA19C",
                      "Subscription Number": "B-7GL04419XK2210345", "Item Title": "Seed of the month"})
     # things that must NOT be touched
-    rows.append({"Date": (death - timedelta(days=50)).strftime("%m/%d/%Y"), "Name": "Kalpana Silks", "Type": "Express Checkout Payment",
-                 "Status": "Completed", "Gross": "-86.00", "To Email Address": "shop@kalpanasilks.example", "Transaction ID": "KS5521093AB",
-                 "Item Title": "Cotton saree"})
-    rows.append({"Date": (death - timedelta(days=20)).strftime("%m/%d/%Y"), "Name": "Arun Narayanan", "Type": "Mobile Payment",
-                 "Status": "Completed", "Gross": "-40.00", "To Email Address": "arun.n@example.com", "Transaction ID": "AN7730012ZQ",
+    rows.append({"Date": (death - timedelta(days=50)).strftime("%m/%d/%Y"), "Name": "Willow & Thread Quilts", "Type": "Express Checkout Payment",
+                 "Status": "Completed", "Gross": "-86.00", "To Email Address": "shop@willowandthread.example", "Transaction ID": "WT5521093AB",
+                 "Item Title": "Hand-stitched quilt"})
+    rows.append({"Date": (death - timedelta(days=20)).strftime("%m/%d/%Y"), "Name": "Daniel Hayes", "Type": "Mobile Payment",
+                 "Status": "Completed", "Gross": "-40.00", "To Email Address": "daniel.hayes@example.com", "Transaction ID": "DH7730012ZQ",
                  "Item Title": ""})
-    rows.append({"Date": (death - timedelta(days=33)).strftime("%m/%d/%Y"), "Name": "Arun Narayanan", "Type": "Mobile Payment",
-                 "Status": "Completed", "Gross": "60.00", "From Email Address": "arun.n@example.com", "To Email Address": email,
-                 "Transaction ID": "AN6610045ZQ"})
+    rows.append({"Date": (death - timedelta(days=33)).strftime("%m/%d/%Y"), "Name": "Daniel Hayes", "Type": "Mobile Payment",
+                 "Status": "Completed", "Gross": "60.00", "From Email Address": "daniel.hayes@example.com", "To Email Address": email,
+                 "Transaction ID": "DH6610045ZQ"})
 
     db.kv_set("sample_activity_csv", to_csv(rows, email))
     db.audit("system", "DEMO seeded", None, {"mode": pp.MODE, "merchants": len(MERCHANTS)})

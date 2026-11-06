@@ -89,15 +89,16 @@ def run(sid: str, ingest: Callable[[str, bytes, str], dict]) -> dict:
         return _result(sid, k["status"] != "VERIFIED", "Forensics" + (" + fraud network" if (k.get("network") or {}).get("flags") else ""), ev, t0)
 
     if sid == "tampered_notice":
-        body = {"protocol": notices.PROTOCOL, "notice_id": "ntc_lab", "deceased": {"name": "Lakshmi Narayanan", "date_of_death": "2026-10-06"},
+        body = {"protocol": notices.PROTOCOL, "notice_id": "ntc_lab", "deceased": {"name": seed.DECEASED["name"], "date_of_death": seed.dod().isoformat()},
                 "requested": ["refund_charges_after_death"]}
         sig = notices.sign(body)
         evil = copy.deepcopy(body)
         evil["deceased"]["date_of_death"] = "2026-01-01"
+        changed = f"{body['deceased']['date_of_death']} -> 2026-01-01"
         ok_before, ok_after = notices.verify(body, sig), notices.verify(evil, sig)
         return _result(sid, ok_before and not ok_after, "Ed25519 signature", [
             f"Original notice verifies with the hub's public key: {ok_before}",
-            "Changed date_of_death 2026-10-06 -> 2026-01-01",
+            f"Changed date_of_death {changed}",
             f"Edited notice verifies: {ok_after}. The merchant agent rejects any notice that doesn't verify, before reading it"], t0)
 
     if sid == "no_approval":
