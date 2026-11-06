@@ -46,7 +46,7 @@ The first question we asked was the dangerous one: what stops someone reporting 
   - **Bryntum Scheduler** for the family timeline.
 - **Deployment and proof.**
   - Docker on **Render** (Blueprint).
-  - 25 tests, with CI on Python 3.11–3.13.
+  - 26 tests, with CI on Linux, Windows and macOS (Python 3.11–3.13).
   - `scripts/sandbox_run.py` runs the whole flow on real PayPal sandbox subscriptions and records the evidence.
 
 ## Challenges we ran into
