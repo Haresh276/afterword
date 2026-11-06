@@ -1,58 +1,85 @@
 # Afterword: Devpost submission text
 
-**Tagline (under 200 characters):** When someone dies, their subscriptions don't. Afterword tells every company once, with a signed notice their own PayPal agent verifies, pauses, cancels and refunds.
+**Project name:** Afterword
+
+**Tagline (under 200 characters):** When someone dies, their subscriptions don't. Tell every company once: a signed notice their own PayPal agent verifies, pauses, cancels and refunds, with an "I'm alive" veto.
 
 ## Inspiration
-When a parent dies, the family inherits a second job: finding every subscription still charging the account and phoning each company, one at a time, with a death certificate. In the UK alone that's about 7 million hours a year, valued at £171m, and the average person has 11.47 accounts and services to close. Banks have the Death Notification Service and governments have Tell Us Once. The subscription economy has nothing, and recurring PayPal payments keep running until someone stops each one.
+3,072,039 people died in the US in 2024. Each left behind a set of subscriptions still charging their account: streaming, cloud storage, news, apps, an annual antivirus renewal nobody remembers. Settling a loved one's affairs takes families an average of 13 months and nearly $13,000. Part of that is the second job grief hands you: calling every company, one at a time, death certificate in hand.
 
-The first design question we asked was the dangerous one: what stops someone reporting a *living* person dead? About 12,000 living Americans are wrongly declared dead every year. Afterword is built around that question.
+Banks have death-notification services. The subscription economy has nothing.
+
+The first question we asked was the dangerous one: what stops someone reporting a *living* person dead? About 12,000 living Americans are wrongly declared dead every year. So Afterword is built around that question as much as around the family.
 
 ## What it does
-- **The family tells us once.** A vision model reads the death certificate in any language, ten checks run, and the image is deleted. Only the fields and two fingerprints are kept.
-- **It finds what's still charging.** From the PayPal activity export it finds every subscription, annual renewal and open invoice, and what was taken after the death. It predicts every charge in the next year, and a Bryntum timeline shows it all at once.
-- **One signed notice per company.** Each company's agent verifies the Ed25519 signature, matches PayPal's own subscriber record to the certificate, and **pauses billing immediately**. That step is reversible.
-- **Proof of life.** The account holder's own address is asked *"Was this a mistake?"*. Irreversible steps (cancel, refund, cancel invoice) wait out an objection window that the PayPal gateway itself enforces. One click from a living person withdraws every notice, resumes billing, moves no money and flags the reporter.
-- **Then it closes for real.** Agents cancel and refund through the PayPal Agent Toolkit, sign a closure receipt, and stop all emails to the deceased. Afterword re-reads PayPal to confirm.
-- **For businesses.** An AG Grid inbox with auto-close rules and human review. An AG Studio network report whose AI agent runs on Gemini. A read-only MCP server so their own support agents can verify notices.
-- **Try to break it.** Nine live attacks against the real code. All nine are blocked.
+- **The family tells us once.** Gemini reads the death certificate (English, Spanish or any other language), ten checks run, and the image is deleted. Only the fields and two fingerprints are kept.
+- **It finds what's still charging.** From the PayPal activity export, Afterword finds every subscription, annual renewal and unpaid invoice, and what was taken after the death. It predicts every charge in the next year, and a **Bryntum** timeline shows the whole picture.
+- **One signed notice per company.** Each company's own agent:
+  - verifies the Ed25519 signature;
+  - matches PayPal's subscriber record to the certificate;
+  - **pauses billing immediately**. That step is reversible.
+- **Proof of life.** The account holder's own inbox is asked *"Was this a mistake?"*. Irreversible steps (cancel, refund, cancel invoice) wait out an objection window that the PayPal gateway itself enforces. One click from a living person withdraws every notice, resumes billing, moves no money, and flags the reporter.
+- **Then it closes for real.** Agents cancel and refund through the **PayPal Agent Toolkit**, sign a closure receipt, and stop all emails to the deceased. Afterword re-reads PayPal to confirm.
+- **For businesses:**
+  - an **AG Grid** inbox with auto-close rules and human review;
+  - an **AG Studio** network report whose AI agent runs on Gemini;
+  - an MCP server, so a company's own billing or collections agents can verify notices and avoid chasing a dead customer for a failed payment.
+- **Try to break it.** Nine live attacks against the real code, from a forged certificate to prompt injection. All nine are blocked.
 
 ## How we built it
-- **Backend.** FastAPI and SQLite. The PayPal Agent Toolkit (Python) handles subscriptions and invoices. The toolkit's authenticated client handles REST calls it has no tool for: suspend/activate, transactions, refunds with `PayPal-Request-Id`, and webhook signature verification.
-- **AI.** Gemini through an OpenAI-compatible client, for certificate reading and letters in English, Hindi, Tamil and Telugu. No model sits in the money path.
-- **Forensics.** A DCT perceptual hash and JPEG-ghost error-level analysis. A union-find fraud graph across cases. Robust billing-period estimation using the median inter-arrival gap and MAD confidence.
-- **Trust layer.** One choke point for every money call. Approvals are bound to a SHA-256 of the payload and expire after 24 hours. A `not_before` time enforces the objection window. The audit log is append-only and hash-chained.
-- **Frontend.** React and Vite. **AG Grid** for the merchant inbox and **AG Studio** for network insights. We wrote a small Responses-API shim over Gemini so AG's documented AI adapter runs unchanged. **Bryntum Scheduler** draws the family timeline.
-- **Deployment.** A Docker image and a **Render** Blueprint. 24 automated tests.
+- **Backend.** FastAPI and SQLite.
+  - The PayPal Agent Toolkit 1.11 (Python) handles products, plans, subscriptions and invoices.
+  - The toolkit's own authenticated client handles the endpoints it has no tool for: suspend/activate, transactions, refunds with `PayPal-Request-Id`, and webhook signature verification.
+- **AI.** Gemini 2.5 Flash reads certificates (vision) and writes letters. **No model sits in the money path.** Amounts and targets come from code reading PayPal.
+- **Forensics and detection.**
+  - A DCT perceptual hash and JPEG-ghost error-level analysis.
+  - A union-find fraud graph across all cases.
+  - Robust billing-period estimation (median inter-arrival gap, MAD confidence, price-rise tolerance).
+- **Trust layer.**
+  - One choke point for every money call.
+  - Approvals bound to a SHA-256 of the payload, with a 24-hour expiry.
+  - A `not_before` time that enforces the objection window.
+  - An append-only, hash-chained audit log.
+- **Frontend.**
+  - React and Vite.
+  - **AG Grid** and **AG Studio**. A small Responses-API shim over Gemini lets AG's documented AI adapter run unchanged.
+  - **Bryntum Scheduler** for the family timeline.
+- **Deployment and proof.**
+  - Docker on **Render** (Blueprint).
+  - 25 tests, with CI on Python 3.11–3.13.
+  - `scripts/sandbox_run.py` runs the whole flow on real PayPal sandbox subscriptions and records the evidence.
 
 ## Challenges we ran into
 - **Griefing.** Any "report a death" product can be weaponised. We made every irreversible step wait, put the wait in the gateway rather than the UI, and gave the subject a one-click veto.
-- **A fraudster could lock out the real family.** If someone submits an edited copy of a certificate first, the genuine family's later case would match it. A reuse flag is now critical only if the other case *passed*.
-- **Gaps in the Python toolkit.** It has no refund, suspend or transactions tool. We call those endpoints through the toolkit's own authenticated client, behind the same approval gate.
-- **Error-level analysis false positives.** Coloured disclaimer text and page borders triggered it. Luminance-only JPEG ghosts with an ink mask and robust z-scores fixed that. We state its limits plainly.
+- **A fraudster could lock out the real family.** If someone submits an edited copy first, the genuine family's case would match it. A reuse flag is now critical only if the other case *passed*.
+- **A hosted demo on real money objects gets used up.** The first judge would cancel the sandbox subscriptions for everyone else. So the shared demo runs on a faithful copy of the PayPal endpoints, while a live-check button and a recorded full sandbox run prove the same code on real PayPal.
+- **Toolkit gaps and packaging.** The Python toolkit has no refund, suspend or transactions tool, so we call those endpoints through its authenticated client, behind the same approval gate. Its pinned extras don't install on Python 3.13+, so we install its core alone.
 
 ## Accomplishments that we're proud of
-- **A two-phase close** (pause now, cancel later, undo on objection) that we haven't seen in any other entry.
-- **The red-team page.** Judges can run the attacks themselves.
-- **Kind, specific letters** in four Indian and English languages.
+- **A reversible-first, two-phase close** with a proof-of-life veto. We haven't seen it in any other entry.
+- **A red-team page** judges can attack themselves.
+- **Letters that are kind and specific**, in the family's language.
 
 ## What we learned
-Trust is the product. The model is the easy part. What makes an agent safe to let near money is the boring machinery around it: approvals bound to payloads, idempotency keys, reversible-first ordering, and independently re-reading the ledger.
+Trust is the product. The model is the easy part. What makes an agent safe near money is the machinery around it: approvals bound to payloads, idempotency keys, reversible-first ordering, and independently re-reading the ledger.
 
 ## What's next
 - Removing Vault payment tokens in the same notice.
-- PayPal's own deceased-account team as an Afterword node.
+- PayPal's deceased-account team as an Afterword node.
 - An executor role across estates.
 - Banks and utilities on the same signed protocol.
 
 ## Built with
-python, fastapi, sqlite, paypal-agent-toolkit, paypal-rest-api, gemini, openai-compatible-api, react, vite, ag-grid, ag-studio, bryntum-scheduler, mcp, ed25519, numpy, pillow, reportlab, docker, render
+python, fastapi, sqlite, paypal-agent-toolkit, paypal-rest-api, paypal-subscriptions, paypal-invoicing, gemini, react, vite, ag-grid, ag-studio, bryntum-scheduler, mcp, ed25519, numpy, pillow, reportlab, docker, render, github-actions
 
-## AI tools used (for the form)
-- **Gemini 2.5 Flash.** Reads certificates (vision), writes letters, and powers the AG Studio assistant through our Responses-API shim.
-- **The PayPal Agent Toolkit** is the agents' PayPal tool layer.
-- **Claude (Anthropic)** was used as a coding assistant during development.
+## Try it out (links)
+- Live demo: `https://<your-service>.onrender.com`
+- Code: https://github.com/Haresh276/afterword
+- Video: `<YouTube link>`
 
-## Try it
-- Repo: https://github.com/Haresh276/afterword
-- Run: `python scripts/start_demo.py` (no keys needed).
-- Judge path: see the README's 3-minute table.
+## Testing instructions (paste into the "testing instructions" or description field)
+- **Hosted demo.** Open the link; the first load can take about a minute on Render's free tier. No login needed.
+- **Path.** *For families → Fill in the demo family → Use the demo specimen → Use the demo export → Tell 7 companies*. Then *For businesses → The Daily Ledger*, *Network insights* and *PayPal sandbox proof*, then *Try to break it*.
+- **Run locally.** `python scripts/install.py && python scripts/start_demo.py` (Python 3.11+, no keys).
+
+All people, companies and documents in the demo are fictional.
