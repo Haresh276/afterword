@@ -216,7 +216,15 @@ def test_mcp_tools_for_merchant_agents(c):
     c.post("/mcp/", json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18",
            "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}, headers=h)
     tools = c.post("/mcp/", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, headers=h).json()["result"]["tools"]
-    assert {t["name"] for t in tools} == {"list_notices", "get_notice", "verify_notice"}  # read and verify only: no money tools
+    assert {t["name"] for t in tools} == {"list_notices", "get_notice", "verify_notice", "check_customer_before_collecting"}  # no money tools
+    from app import mcp_server
+    assert mcp_server.check_customer_before_collecting("m_streambox", seed.DECEASED["email"]) == {"reported_deceased": False}
+    k = _case(c)
+    c.post(f"/api/cases/{k['id']}/activity", data={"use_sample": "1"})
+    c.post(f"/api/cases/{k['id']}/notify")
+    r = mcp_server.check_customer_before_collecting("m_streambox", seed.DECEASED["email"].upper())
+    assert r["reported_deceased"] and r["signature_valid"]
+    assert mcp_server.check_customer_before_collecting("m_streambox", "someone.else@example.com") == {"reported_deceased": False}
 
 
 # --------------------------------------------------------------------- objection window (proof of life)

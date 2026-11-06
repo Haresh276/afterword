@@ -1,0 +1,16 @@
+[
+  {"id": "hook",     "text": "When someone dies, their subscriptions don't. Three million Americans die every year, and their families spend months calling companies, one at a time, death certificate in hand."},
+  {"id": "cert",     "text": "Rachel's mother, Eleanor, died last month. Rachel tells Afterword once. Gemini reads the death certificate, in English or Spanish. Ten checks run, including image forensics, and then the image is deleted."},
+  {"id": "found",    "text": "From Eleanor's PayPal activity, Afterword finds eight things still charging her: subscriptions, an annual renewal due in days, an unpaid invoice, and what has been taken since she died."},
+  {"id": "timeline", "text": "Here is the money over time. Grey before her death. Red after it."},
+  {"id": "tell",     "text": "One click sends a signed notice to seven companies. Each company's own agent checks it against its PayPal records, and pauses billing right away. That step can be undone."},
+  {"id": "email",    "text": "Because a tool like this could be abused, Eleanor's own inbox is asked: was this a mistake? Nothing irreversible happens until that window closes."},
+  {"id": "closed",   "text": "Then the agents cancel and refund through the PayPal Agent Toolkit. Each company signs a receipt, and Afterword re-reads PayPal to confirm it really happened."},
+  {"id": "green",    "text": "A year of charges that will never be taken."},
+  {"id": "business", "text": "Some companies review by hand. They see PayPal's own record matched to the certificate, and every step marked reversible or not. No AI model ever moves money."},
+  {"id": "proof",    "text": "And this isn't a mock-up. The same code runs on real PayPal sandbox subscriptions, with PayPal's own IDs to prove it.", "needs_evidence": true},
+  {"id": "insights", "text": "Across the network, AG Studio shows every notice, every PayPal step, and every attack that was stopped."},
+  {"id": "lab",      "text": "You can try to break it. Nine live attacks, from forged certificates to prompt injection. All nine are blocked."},
+  {"id": "finale",   "text": "And if Eleanor were alive? One click from her, and every pause is undone. No money moves, and the person who reported her is flagged."},
+  {"id": "end",      "text": "Afterword. Tell us once."}
+]

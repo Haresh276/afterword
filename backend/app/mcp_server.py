@@ -53,6 +53,23 @@ def verify_notice(notice_id: str) -> dict:
             "hub_public_key": notices.public_key_b64()}
 
 
+@server.tool(description=("Before your billing or collections agent retries a failed payment, sends a dunning email or opens "
+                          "a collections case, ask whether this customer has been reported deceased to your business. "
+                          "Answers only for notices addressed to merchant_id, never for other businesses' customers."))
+def check_customer_before_collecting(merchant_id: str, paypal_email: str) -> dict:
+    email = (paypal_email or "").strip().lower()
+    for n in db.query("SELECT * FROM notices WHERE merchant_id=? ORDER BY created_at DESC", (merchant_id,)):
+        p = n["payload"]
+        if (p["deceased"].get("paypal_email") or "").lower() != email:
+            continue
+        if n["status"] == "WITHDRAWN":
+            return {"reported_deceased": False, "note": "A report was withdrawn: the account holder said they are alive.", "notice_id": n["id"]}
+        return {"reported_deceased": True, "notice_id": n["id"], "status": n["status"], "date_of_death": p["deceased"].get("date_of_death"),
+                "signature_valid": notices.verify(p, n["signature"]),
+                "advice": "Do not retry the charge, send payment reminders or start collections. Handle the notice instead."}
+    return {"reported_deceased": False}
+
+
 def asgi_app():
     from mcp.server.transport_security import TransportSecuritySettings
 
