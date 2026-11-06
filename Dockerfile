@@ -1,9 +1,6 @@
 # Afterword: one container, the Python API serving the prebuilt React UI (frontend/dist is committed,
 # so neither Render nor a judge needs Node). Rebuild the UI with:  cd frontend && npm ci && npm run build
 FROM python:3.12-slim
-# a serif font for the specimen certificate image
-RUN apt-get update && apt-get install -y --no-install-recommends fonts-freefont-ttf \
-    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY backend/requirements.txt backend/requirements.txt
 RUN pip install --no-cache-dir -r backend/requirements.txt \

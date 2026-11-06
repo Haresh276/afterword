@@ -79,6 +79,6 @@ def evidence() -> dict:
     if not EVIDENCE.exists():
         return {"recorded": False}
     try:
-        return {"recorded": True, **json.loads(EVIDENCE.read_text())}
+        return {"recorded": True, **json.loads(EVIDENCE.read_text(encoding="utf-8"))}
     except ValueError:
         return {"recorded": False, "error": "evidence file unreadable"}

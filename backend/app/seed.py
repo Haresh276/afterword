@@ -19,6 +19,7 @@ from . import paypal_gateway as pp
 SAMPLES = Path(__file__).resolve().parents[1] / "samples"
 SAMPLES.mkdir(exist_ok=True)
 SPECIMEN_PATH = SAMPLES / "specimen_certificate.png"
+FONTS = Path(__file__).resolve().parent / "fonts"   # bundled DejaVu (free licence), so the specimen renders the same on every OS
 SANDBOX_DATA = SAMPLES / "sandbox_demo.json"   # written by scripts/sandbox_setup.py
 
 DECEASED = {"given": "Eleanor", "surname": "Hayes", "name": "Eleanor Hayes",
@@ -61,8 +62,7 @@ def make_specimen() -> bytes:
     W, H = 1100, 1400
     img = Image.new("RGB", (W, H), "#fbfaf6")
     d = ImageDraw.Draw(img)
-    serif = "/usr/share/fonts/truetype/freefont/FreeSerif.ttf"
-    serif_b = "/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf"
+    serif, serif_b = str(FONTS / "DejaVuSerif.ttf"), str(FONTS / "DejaVuSerif-Bold.ttf")
     try:
         T = ImageFont.truetype(serif_b, 44); S = ImageFont.truetype(serif, 30); L = ImageFont.truetype(serif, 24)
         V = ImageFont.truetype(serif_b, 30); WM = ImageFont.truetype(serif_b, 120)
@@ -104,7 +104,7 @@ def make_forged() -> bytes:
     img = Image.open(io.BytesIO(b.getvalue())).convert("RGB")
     d = ImageDraw.Draw(img)
     try:
-        f = ImageFont.truetype("/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf", 30)
+        f = ImageFont.truetype(str(FONTS / "DejaVuSerif-Bold.ttf"), 30)
     except OSError:
         f = ImageFont.load_default()
     d.rectangle([105, 360, 900, 402], fill="#fbfaf6")
@@ -146,7 +146,7 @@ def seed_demo() -> dict:
     death = dod()
     email = DECEASED["email"]
 
-    sandbox = json.loads(SANDBOX_DATA.read_text()) if pp.MODE == "sandbox" and SANDBOX_DATA.exists() else None
+    sandbox = json.loads(SANDBOX_DATA.read_text(encoding="utf-8")) if pp.MODE == "sandbox" and SANDBOX_DATA.exists() else None
 
     for mid, name, _cat, amount, _auto, _cap, _acc, kind in MERCHANTS:
         m = db.get("merchants", mid)
