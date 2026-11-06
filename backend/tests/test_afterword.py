@@ -387,3 +387,26 @@ def test_live_paypal_check_shape(c, monkeypatch):
     r = c.post("/api/paypal/live-check").json()
     assert r["ok"] and len(r["steps"]) == 6 and r["steps"][3]["id"] == "I-1"
     assert c.get("/api/paypal/evidence").json()["recorded"] in (True, False)
+
+
+def test_shared_database_is_thread_safe(c):
+    """The web workers and the background ticker share one connection; hammer it from 8 threads."""
+    import threading
+    errors = []
+    sid = pp.transport().seed_subscription("Stress plan", "Eleanor", "Hayes", "e@example.com", 1.0, "USD", "2026-01-01T00:00:00Z")
+
+    def work(n):
+        try:
+            for i in range(40):
+                db.audit(f"t{n}", "stress", None, {"i": i})
+                db.kv_set(f"stress{n}", str(i))
+                db.query("SELECT COUNT(*) AS k FROM audit_log")
+                pp.call("show_subscription_details", {"subscription_id": sid}, actor=f"t{n}")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(repr(exc))
+
+    threads = [threading.Thread(target=work, args=(n,)) for n in range(8)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert not errors, errors[:3]
+    assert c.get("/api/audit/verify").json()["ok"]                     # the hash chain never forked

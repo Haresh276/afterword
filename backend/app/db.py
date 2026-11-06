@@ -122,17 +122,54 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:10]}"
 
 
-_conn: sqlite3.Connection | None = None
+_conn: "_Locked | None" = None
 
 
-def conn() -> sqlite3.Connection:
+class _Rows:
+    """Query results read out while the lock was held, so no thread ever reads a cursor another thread moved."""
+    def __init__(self, rows: list):
+        self._rows = rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _Locked:
+    """One SQLite connection shared by the web workers and the background ticker. Every call holds the
+    process-wide lock: without it, one thread's COMMIT can land between another's check and COMMIT
+    ("cannot commit - no transaction is active"), which shows up on slower machines such as Windows."""
+    def __init__(self, raw: sqlite3.Connection):
+        self.raw = raw
+
+    def execute(self, sql: str, params: tuple | list = ()) -> _Rows:
+        with _lock:
+            return _Rows(self.raw.execute(sql, params).fetchall())
+
+    def executescript(self, script: str) -> None:
+        with _lock:
+            self.raw.executescript(script)
+
+    def commit(self) -> None:
+        with _lock:
+            self.raw.commit()
+
+
+def conn() -> _Locked:
     global _conn
-    if _conn is None:
-        _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-        _conn.row_factory = sqlite3.Row
-        _conn.executescript(SCHEMA)
-        _migrate(_conn)
-        _conn.commit()
+    with _lock:
+        if _conn is None:
+            raw = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=15)
+            raw.row_factory = sqlite3.Row
+            raw.executescript(SCHEMA)
+            _migrate(raw)
+            raw.commit()
+            _conn = _Locked(raw)
     return _conn
 
 

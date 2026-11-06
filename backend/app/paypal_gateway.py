@@ -161,6 +161,10 @@ class _Mock:
         return dict(r) if r else None
 
     def run(self, method: str, params: dict, request_id: str | None = None) -> dict:
+        with db._lock:  # each emulated call is atomic, like a real API call
+            return self._run(method, params, request_id)
+
+    def _run(self, method: str, params: dict, request_id: str | None = None) -> dict:
         c = db.conn()
         if method == "show_subscription_details":
             s = self._one("SELECT * FROM mock_subscriptions WHERE id=?", (params["subscription_id"],))
