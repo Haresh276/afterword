@@ -37,8 +37,11 @@ export default function App() {
         <span className="spacer" />
         {status && (
           <div className="status">
-            <span><i className="dot" style={{ background: status.paypal_mode === 'sandbox' ? '#2f5d52' : '#8f621a' }} />
-              PayPal {status.paypal_mode === 'sandbox' ? 'sandbox' : 'simulator'}</span>
+            <span title={status.paypal_mode === 'sandbox' ? 'Every PayPal call goes to the real sandbox'
+              : status.paypal_keys ? 'The shared demo runs on a PayPal simulator so every visitor gets a fresh run; For businesses > PayPal sandbox proof calls the real sandbox'
+              : 'No PayPal keys on this server: the demo runs on a PayPal simulator'}>
+              <i className="dot" style={{ background: status.paypal_mode === 'sandbox' || status.paypal_keys ? '#2f5d52' : '#8f621a' }} />
+              {status.paypal_mode === 'sandbox' ? 'PayPal sandbox' : status.paypal_keys ? 'PayPal sandbox connected · demo on simulator' : 'PayPal simulator'}</span>
             <span><i className="dot" style={{ background: status.llm_live ? '#2f5d52' : '#8f621a' }} />{status.llm}</span>
           </div>
         )}
