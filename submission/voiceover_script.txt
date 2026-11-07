@@ -8,8 +8,8 @@ Afterword: voice-over script. Each line starts at the time shown; read it at a c
 0:51.1  (8s)  Because a tool like this could be abused, Eleanor's own inbox is asked: was this a mistake? Nothing irreversible happens until that window closes.
 1:00.2  (9s)  Then the agents cancel and refund through the PayPal Agent Toolkit. Each company signs a receipt, and Afterword re-reads PayPal to confirm it really happened.
 1:09.8  (2s)  A year of charges that will never be taken.
-1:12.7  (10s)  Some companies review by hand. They see PayPal's own record matched to the certificate, and every step marked reversible or not. No AI model ever moves money.
+1:12.6  (10s)  Some companies review by hand. They see PayPal's own record matched to the certificate, and every step marked reversible or not. No AI model ever moves money.
 1:22.9  (7s)  Across the network, AG Studio shows every notice, every PayPal step, and every attack that was stopped.
 1:30.2  (6s)  You can try to break it. Nine live attacks, from forged certificates to prompt injection. All nine are blocked.
-1:37.1  (8s)  And if Eleanor were alive? One click from her, and every pause is undone. No money moves, and the person who reported her is flagged.
-1:54.7  (2s)  Afterword. Tell us once.
+1:37.0  (8s)  And if Eleanor were alive? One click from her, and every pause is undone. No money moves, and the person who reported her is flagged.
+1:54.9  (2s)  Afterword. Tell us once.

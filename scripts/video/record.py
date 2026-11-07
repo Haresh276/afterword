@@ -119,8 +119,9 @@ async def main():
                 await tap(pg, pg.get_by_role("button", name="PayPal sandbox proof"), 1500)
                 await pg.mouse.wheel(0, 420)
         async with Scene("insights"):
-            await tap(pg, pg.get_by_role("button", name="Network insights"), 3500)
-            await tap(pg, pg.get_by_role("button", name="Safety"), 800)
+            await tap(pg, pg.get_by_role("button", name="Network insights"), 400)
+            await pg.wait_for_selector(".studio-wrap canvas", timeout=20000)
+            await pg.wait_for_timeout(2500)
         async with Scene("lab"):
             await tap(pg, pg.get_by_role("button", name="Try to break it"), 700)
             await tap(pg, pg.get_by_role("button", name="Run every attack"), 2500)
