@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -57,6 +58,12 @@ async def lifespan(_: FastAPI):
     await task
 
 
+def _session(request: Request) -> str:
+    """The visitor's demo world (sent by the UI as X-Afterword-Session). '' = the shared/real world."""
+    raw = request.headers.get("x-afterword-session", "") or request.query_params.get("session", "")
+    return raw if re.fullmatch(r"[A-Za-z0-9-]{8,64}", raw or "") else ""
+
+
 app = FastAPI(title="Afterword", version="1.1.0", lifespan=lifespan,
               description="Afterword hub API: verified death notices for the subscription economy, on PayPal.")
 OBJECTION_SECONDS = float(os.getenv("AFTERWORD_OBJECTION_WINDOW", "30"))
@@ -99,16 +106,17 @@ class NewCase(BaseModel):
 
 
 @app.post("/api/cases")
-def create_case(body: NewCase):
+def create_case(body: NewCase, request: Request):
     cid = db.new_id("case")
-    db.insert("cases", {"id": cid, **body.model_dump(), "status": "DRAFT", "created_at": db.now()})
+    db.insert("cases", {"id": cid, **body.model_dump(), "status": "DRAFT", "session": _session(request), "created_at": db.now()})
     db.audit("family", "OPENED case", cid, {"claimant": body.claimant_name, "relationship": body.relationship})
     return get_case(cid)
 
 
 @app.get("/api/cases")
-def list_cases():
-    return db.query("SELECT id, deceased_name, claimant_name, status, created_at FROM cases ORDER BY created_at DESC")
+def list_cases(request: Request):
+    return db.query("SELECT id, deceased_name, claimant_name, status, created_at FROM cases WHERE COALESCE(session, '')=? ORDER BY created_at DESC",
+                    (_session(request),))
 
 
 @app.get("/api/cases/{cid}")
@@ -222,7 +230,7 @@ async def upload_activity(cid: str, file: UploadFile | None = File(None), use_sa
     if c["status"] in ("NOTIFIED", "CLOSED"):
         raise HTTPException(409, "Notices have already been sent")
     if use_sample:
-        raw = (db.kv_get("sample_activity_csv") or "").encode()
+        raw = seed.sample_csv((db.get("cases", cid) or {}).get("session") or "").encode()
     elif file is not None and file.filename:
         raw = await file.read()
     else:
@@ -442,9 +450,10 @@ def merchants():
 
 
 @app.get("/api/merchants/{mid}/stats")
-def merchant_stats(mid: str):
+def merchant_stats(mid: str, request: Request):
     from datetime import datetime
-    rows = db.query("SELECT received_at, closed_at, outcome, status FROM notices WHERE merchant_id=?", (mid,))
+    rows = db.query("""SELECT n.received_at, n.closed_at, n.outcome, n.status FROM notices n LEFT JOIN cases c ON c.id = n.case_id
+                       WHERE n.merchant_id=? AND COALESCE(c.session, '')=?""", (mid, _session(request)))
     mins = sorted((datetime.fromisoformat(r["closed_at"]) - datetime.fromisoformat(r["received_at"])).total_seconds() / 60
                   for r in rows if r["closed_at"] and r["received_at"])
     return {"notices": len(rows), "closed": len(mins),
@@ -468,11 +477,13 @@ def patch_merchant(mid: str, body: MerchantPatch):
 
 
 @app.get("/api/merchant/notices")
-def merchant_notices(merchant_id: str | None = None):
+def merchant_notices(request: Request, merchant_id: str | None = None):
     sql = """SELECT n.id, n.status, n.created_at, n.received_at, n.closed_at, n.review, n.outcome, n.payload,
                     m.name AS merchant_name, m.id AS merchant_id, m.auto_close
-             FROM notices n JOIN merchants m ON m.id = n.merchant_id"""
-    rows = db.query(sql + (" WHERE m.id=?" if merchant_id else "") + " ORDER BY n.created_at DESC", (merchant_id,) if merchant_id else ())
+             FROM notices n JOIN merchants m ON m.id = n.merchant_id LEFT JOIN cases c ON c.id = n.case_id
+             WHERE COALESCE(c.session, '') = ?"""
+    args: tuple = (_session(request),)
+    rows = db.query(sql + (" AND m.id=?" if merchant_id else "") + " ORDER BY n.created_at DESC", args + ((merchant_id,) if merchant_id else ()))
     out = []
     for r in rows:
         p = r.pop("payload")
@@ -580,9 +591,9 @@ def lab_list():
 
 
 @app.post("/api/lab/{sid}")
-def lab_run(sid: str):
+def lab_run(sid: str, request: Request):
     try:
-        return lab.run(sid, ingest=_ingest)
+        return lab.run(sid, ingest=_ingest, session=_session(request))
     except KeyError:
         _404("scenario")
 
@@ -593,17 +604,23 @@ def specimen():
 
 
 @app.get("/api/demo/sample-activity.csv")
-def sample_csv():
-    return PlainTextResponse(db.kv_get("sample_activity_csv") or "", media_type="text/csv",
+def sample_csv(request: Request):
+    return PlainTextResponse(seed.sample_csv(_session(request)), media_type="text/csv",
                              headers={"Content-Disposition": 'attachment; filename="paypal-activity-sample.csv"'})
 
 
 @app.post("/api/demo/reset")
-def demo_reset():
+def demo_reset(request: Request):
+    """With a session (the hosted UI always sends one): reset only this visitor's demo world.
+    Without one (tests, local scripts): reset everything."""
+    s = _session(request)
+    if s:
+        seed.reset_session(s)
+        return {"ok": True, "scope": "your demo only"}
     db.reset()
     pp._transport = None
     seed.seed_demo()
-    return {"ok": True}
+    return {"ok": True, "scope": "everything"}
 
 
 # =============================================================================== UI

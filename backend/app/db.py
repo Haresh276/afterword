@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS cases (
     objection_deadline TEXT,  -- irreversible actions wait until this time
     objected_at TEXT, objection_note TEXT,
     redteam INTEGER DEFAULT 0,  -- created by the "Try to break it" lab; ignored by the fraud graph for real cases
+    session TEXT DEFAULT '',  -- demo world of one visitor (hosted demo); '' = the shared/real world
     created_at TEXT
 );
 CREATE TABLE IF NOT EXISTS outbox (
@@ -62,11 +63,13 @@ CREATE TABLE IF NOT EXISTS merchants (
 CREATE TABLE IF NOT EXISTS merchant_customers (
     id TEXT PRIMARY KEY, merchant_id TEXT, customer_name TEXT, email TEXT,
     paypal_subscription_id TEXT, plan_name TEXT, amount REAL, currency TEXT, status TEXT,
-    emails_suppressed INTEGER DEFAULT 0
+    emails_suppressed INTEGER DEFAULT 0,
+    session TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS merchant_invoices (
     id TEXT PRIMARY KEY, merchant_id TEXT, email TEXT, paypal_invoice_id TEXT,
-    description TEXT, amount REAL, currency TEXT, status TEXT
+    description TEXT, amount REAL, currency TEXT, status TEXT,
+    session TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS notices (
     id TEXT PRIMARY KEY, case_id TEXT, merchant_id TEXT,

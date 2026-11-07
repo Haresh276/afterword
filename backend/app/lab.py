@@ -67,7 +67,7 @@ def _lab_action(tool: str, params: dict, amount: float = 0.0, **kw) -> dict:
                       checks=[{"check": "Lab scenario", "passed": True, "detail": "staged"}], amount=amount, **kw)
 
 
-def run(sid: str, ingest: Callable[[str, bytes, str], dict]) -> dict:
+def run(sid: str, ingest: Callable[[str, bytes, str], dict], session: str = "") -> dict:
     t0 = time.perf_counter()
     if sid not in {s["id"] for s in SCENARIOS}:
         raise KeyError(sid)
@@ -76,7 +76,7 @@ def run(sid: str, ingest: Callable[[str, bytes, str], dict]) -> dict:
     if sid == "forged_certificate":
         cid = db.new_id("case")
         db.insert("cases", {"id": cid, "claimant_name": "Lab Attacker", "claimant_email": "attacker@evil.test", "relationship": "friend",
-                            "status": "DRAFT", "redteam": 1, "created_at": db.now()})
+                            "status": "DRAFT", "redteam": 1, "session": session, "created_at": db.now()})
         k = ingest(cid, seed.make_forged(), "image/jpeg")
         v = k.get("verification") or {}
         ela = ((k.get("extraction") or {}).get("forensics") or {}).get("ela") or {}
@@ -171,7 +171,8 @@ def run(sid: str, ingest: Callable[[str, bytes, str], dict]) -> dict:
                 "Even with direct file access, editing a row breaks every later SHA-256 link"], t0)
 
     if sid == "inflated_claim":
-        rec = db.query("SELECT * FROM merchant_customers WHERE merchant_id='m_streambox'")
+        rec = (db.query("SELECT * FROM merchant_customers WHERE merchant_id='m_streambox' AND session=?", (session,))
+               or db.query("SELECT * FROM merchant_customers WHERE merchant_id='m_streambox'"))
         if not rec:
             return _result(sid, True, "-", ["Seed the demo first"], t0)
         m = db.get("merchants", "m_streambox")

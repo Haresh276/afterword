@@ -138,8 +138,37 @@ def seed_merchants() -> None:
                                     "auto_refund_cap": cap, "accent": accent})
 
 
-def seed_demo() -> dict:
-    """Create merchants, their PayPal records (mock or real sandbox) and the matching activity CSV."""
+def sample_csv(session: str = "") -> str:
+    """The demo PayPal export for this visitor's world, creating that world on first use."""
+    csv_text = db.kv_get(f"sample_activity_csv:{session}") if session else db.kv_get("sample_activity_csv")
+    if not csv_text:
+        seed_demo(session)
+        csv_text = db.kv_get(f"sample_activity_csv:{session}") if session else db.kv_get("sample_activity_csv")
+    return csv_text or ""
+
+
+def reset_session(session: str) -> None:
+    """'Start the demo again' for one visitor: their cases and PayPal records go, everyone else's stay."""
+    with db._lock:
+        cases = [r["id"] for r in db.query("SELECT id FROM cases WHERE session=?", (session,))]
+        for cid in cases:
+            for n in db.query("SELECT id FROM notices WHERE case_id=?", (cid,)):
+                db.conn().execute("DELETE FROM pending_actions WHERE notice_id=?", (n["id"],))
+            for t in ("notices", "findings", "outbox"):
+                db.conn().execute(f"DELETE FROM {t} WHERE case_id=?", (cid,))
+            db.conn().execute("DELETE FROM kv WHERE k=?", (f"activity:{cid}",))
+        db.conn().execute("DELETE FROM cases WHERE session=?", (session,))
+        db.conn().execute("DELETE FROM merchant_customers WHERE session=?", (session,))
+        db.conn().execute("DELETE FROM merchant_invoices WHERE session=?", (session,))
+        db.conn().execute("DELETE FROM kv WHERE k=?", (f"sample_activity_csv:{session}",))
+        db.conn().commit()
+    db.audit("system", "DEMO world reset", None, {"session": session[:8] + "…", "cases": len(cases)})
+    seed_demo(session)
+
+
+def seed_demo(session: str = "") -> dict:
+    """Create merchants, their PayPal records (mock or real sandbox) and the matching activity CSV.
+    With a session, the records belong to one visitor's demo world (fresh subscription ids, own CSV)."""
     ensure_specimen()
     seed_merchants()
     rows: list[dict] = []
@@ -147,6 +176,8 @@ def seed_demo() -> dict:
     email = DECEASED["email"]
 
     sandbox = json.loads(SANDBOX_DATA.read_text(encoding="utf-8")) if pp.MODE == "sandbox" and SANDBOX_DATA.exists() else None
+    if sandbox and session:   # the real sandbox has one set of subscriptions; per-visitor worlds are simulator-only
+        sandbox = None if pp.MODE != "sandbox" else sandbox
 
     for mid, name, _cat, amount, _auto, _cap, _acc, kind in MERCHANTS:
         m = db.get("merchants", mid)
@@ -163,7 +194,7 @@ def seed_demo() -> dict:
                 charges = [(d, pp.transport().seed_capture(sid, _ts(d), amount, "USD"), amount) for d in days]
             db.insert("merchant_customers", {"id": db.new_id("cus"), "merchant_id": mid, "customer_name": DECEASED["name"],
                                              "email": email, "paypal_subscription_id": sid, "plan_name": f"{name} annual",
-                                             "amount": amount, "currency": "USD", "status": "ACTIVE"})
+                                             "amount": amount, "currency": "USD", "status": "ACTIVE", "session": session})
             for d, cid, amt in charges:
                 rows.append({"Date": d.strftime("%m/%d/%Y"), "Name": name, "Type": "Subscription Payment", "Status": "Completed",
                              "Gross": f"-{amt:.2f}", "To Email Address": m["paypal_email"], "Transaction ID": cid,
@@ -183,7 +214,7 @@ def seed_demo() -> dict:
                 charges = [(d, pp.transport().seed_capture(sid, _ts(d), a, "USD"), a) for d, a in zip(days, amts)]
             db.insert("merchant_customers", {"id": db.new_id("cus"), "merchant_id": mid, "customer_name": DECEASED["name"],
                                              "email": email, "paypal_subscription_id": sid, "plan_name": f"{name} monthly",
-                                             "amount": amount, "currency": "USD", "status": "ACTIVE"})
+                                             "amount": amount, "currency": "USD", "status": "ACTIVE", "session": session})
             for d, cid, amt in charges:
                 rows.append({"Date": d.strftime("%m/%d/%Y"), "Name": name, "Type": "Subscription Payment", "Status": "Completed",
                              "Gross": f"-{amt:.2f}", "To Email Address": m["paypal_email"], "Transaction ID": cid,
@@ -191,7 +222,8 @@ def seed_demo() -> dict:
         else:
             iid = sandbox["invoices"][mid] if sandbox else pp.transport().seed_invoice(email, amount, "USD", "Piano lessons, block of 8")
             db.insert("merchant_invoices", {"id": db.new_id("inv"), "merchant_id": mid, "email": email, "paypal_invoice_id": iid,
-                                            "description": "Piano lessons, block of 8", "amount": amount, "currency": "USD", "status": "UNPAID"})
+                                            "description": "Piano lessons, block of 8", "amount": amount, "currency": "USD", "status": "UNPAID",
+                                            "session": session})
             rows.append({"Date": (death - timedelta(days=12)).strftime("%m/%d/%Y"), "Name": name, "Type": "Invoice Received",
                          "Status": "Unpaid", "Gross": f"-{amount:.2f}", "To Email Address": m["paypal_email"],
                          "Transaction ID": "", "Invoice Number": iid, "Item Title": "Piano lessons, block of 8"})
@@ -213,8 +245,8 @@ def seed_demo() -> dict:
                  "Status": "Completed", "Gross": "60.00", "From Email Address": "daniel.hayes@example.com", "To Email Address": email,
                  "Transaction ID": "DH6610045ZQ"})
 
-    db.kv_set("sample_activity_csv", to_csv(rows, email))
-    db.audit("system", "DEMO seeded", None, {"mode": pp.MODE, "merchants": len(MERCHANTS)})
+    db.kv_set(f"sample_activity_csv:{session}" if session else "sample_activity_csv", to_csv(rows, email))
+    db.audit("system", "DEMO seeded", None, {"mode": pp.MODE, "merchants": len(MERCHANTS), **({"session": session[:8] + "…"} if session else {})})
     return {"ok": True, "date_of_death": death.isoformat()}
 
 

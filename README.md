@@ -20,8 +20,8 @@ A person approves each step, or the company's written auto-close rule does. Befo
 
 Built solo for the **PayPal AI Hackathon 2026** with the **PayPal Agent Toolkit**, **Gemini**, **AG Studio and AG Grid**, **Bryntum Scheduler** and **Render**.
 
-> **Live demo:** `https://afterword.onrender.com` · free tier: the first visit can take about a minute to wake up.
-> **Video (2 min):** `<YouTube link>` · **Run it yourself:** `python scripts/install.py && python scripts/start_demo.py` (Python 3.11+, no keys, no Node)
+> **Live demo and 2-minute video:** linked at the top of the Devpost page (the hosted demo is on Render's free tier, so the first visit can take about a minute to wake up).
+> **Run it yourself:** `python scripts/install.py && python scripts/start_demo.py` (Python 3.11+, any OS, no keys, no Node).
 
 <img src="docs/screenshots/5-timeline-after.jpg" width="49%" alt="Bryntum timeline: charges before the death, after it, closed, and a year of charges that won't be taken"> <img src="docs/screenshots/3-paused-window.jpg" width="49%" alt="Billing paused at every company while the objection window runs">
 
@@ -41,7 +41,7 @@ Built solo for the **PayPal AI Hackathon 2026** with the **PayPal Agent Toolkit*
 | 2:40 | **Try to break it** | *Run every attack* | **9 of 9 blocked** |
 | Bonus | Step 4 again | *Start the demo again*, send, open the email link, press *I'm alive. Stop this.* | Every pause undone, no money moved, the reporter flagged |
 
-The shared demo runs on a built-in copy of the PayPal endpoints, so every judge gets a fresh, repeatable run. **PayPal sandbox proof** shows the same code on the real sandbox.
+The shared demo runs on a built-in copy of the PayPal endpoints, and **every visitor gets their own demo world** (their own cases, inbox and simulated PayPal records), so judges using the site at the same time never reset or block each other. **PayPal sandbox proof** shows the same code on the real sandbox.
 
 ## Why it matters
 

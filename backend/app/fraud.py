@@ -50,12 +50,15 @@ def _person(c: dict) -> str:
 
 def assess(case_id: str) -> dict:
     cases = db.query("SELECT id, claimant_email, claimant_name, deceased_name, date_of_birth, registration_number, "
-                     "certificate_sha256, certificate_phash, status, objected_at, redteam, created_at FROM cases WHERE certificate_sha256 IS NOT NULL")
+                     "certificate_sha256, certificate_phash, status, objected_at, redteam, session, created_at FROM cases WHERE certificate_sha256 IS NOT NULL")
     me = next((c for c in cases if c["id"] == case_id), None)
     if not me:
         return {"component": [], "flags": [], "links": []}
     if not me.get("redteam"):  # attacks staged in the "Try to break it" lab never taint real families' cases
         cases = [c for c in cases if not c.get("redteam")]
+    # On the hosted demo every visitor has their own world: one judge's "I'm alive" or forged copy
+    # must not block the next judge's Eleanor Hayes. Real deployments have one world (session '').
+    cases = [c for c in cases if (c.get("session") or "") == (me.get("session") or "")]
     uf = _UF()
     keys: dict[str, list[str]] = defaultdict(list)
     for c in cases:

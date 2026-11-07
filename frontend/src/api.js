@@ -1,9 +1,20 @@
+// Each visitor gets their own demo world on the shared hosted demo (own cases, own simulated PayPal data),
+// so two judges never reset or block each other.
+export const SESSION = (() => {
+  const make = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`)
+  try {
+    let s = localStorage.getItem('aw_session')
+    if (!s) { s = make(); localStorage.setItem('aw_session', s) }
+    return s
+  } catch { return make() }
+})()
+
 async function req(method, url, body) {
-  const opts = { method }
+  const opts = { method, headers: { 'X-Afterword-Session': SESSION } }
   if (body instanceof FormData) opts.body = body
   else if (body !== undefined) {
     opts.body = JSON.stringify(body)
-    opts.headers = { 'Content-Type': 'application/json' }
+    opts.headers['Content-Type'] = 'application/json'
   }
   const r = await fetch(url, opts)
   const text = await r.text()

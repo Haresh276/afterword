@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { lazy, Suspense } from 'react'
-import { api, fmtDate, fmtWait, langLabel, LANGS, money, OFFLINE_LANGS, pct, runtime, secondsUntil } from './api'
+import { api, fmtDate, fmtWait, langLabel, LANGS, money, OFFLINE_LANGS, pct, runtime, secondsUntil, SESSION } from './api'
 const Timeline = lazy(() => import('./Timeline'))
 
 const daysTo = (iso) => Math.max(0, Math.round((new Date(iso + 'T00:00:00') - new Date(new Date().toDateString())) / 864e5))
@@ -161,7 +161,7 @@ function Activity({ c, refresh, notify }) {
           <button className="btn primary" disabled={!file || busy} onClick={() => send({ file })}>{busy ? 'Reading' : 'Find what to stop'}</button>
           <button className="btn" disabled={busy} onClick={() => send({ use_sample: '1' })}>Use the demo export</button>
         </div>
-        <p className="tiny faint" style={{ marginBottom: 0 }}><a href="/api/demo/sample-activity.csv">Download the demo export</a> to see the format.</p>
+        <p className="tiny faint" style={{ marginBottom: 0 }}><a href={`/api/demo/sample-activity.csv?session=${SESSION}`}>Download the demo export</a> to see the format.</p>
       </div>
     )
   }

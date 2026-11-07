@@ -410,3 +410,30 @@ def test_shared_database_is_thread_safe(c):
     [t.join() for t in threads]
     assert not errors, errors[:3]
     assert c.get("/api/audit/verify").json()["ok"]                     # the hash chain never forked
+
+
+def test_each_visitor_has_their_own_demo_world(c, monkeypatch):
+    """Two judges on the hosted demo at once: one's 'I'm alive' or reset must never touch the other's run."""
+    from app import main
+    monkeypatch.setattr(main, "OBJECTION_SECONDS", 60)
+    A, B = {"X-Afterword-Session": "judge-aaaa-1111"}, {"X-Afterword-Session": "judge-bbbb-2222"}
+
+    def run(h):
+        k = c.post("/api/cases", json={"claimant_name": seed.CLAIMANT["name"], "claimant_email": seed.CLAIMANT["email"],
+                                       "relationship": "daughter", "language": "en"}, headers=h).json()
+        c.post(f"/api/cases/{k['id']}/certificate", data={"use_specimen": "1"}, headers=h)
+        c.post(f"/api/cases/{k['id']}/activity", data={"use_sample": "1"}, headers=h)
+        return c.post(f"/api/cases/{k['id']}/notify", headers=h).json()
+
+    a, b = run(A), run(B)
+    sub_a = {f["merchant_name"]: f for f in a["findings"]}["StreamBox"]["references_json"]["subscription_ids"][0]
+    sub_b = {f["merchant_name"]: f for f in b["findings"]}["StreamBox"]["references_json"]["subscription_ids"][0]
+    assert sub_a != sub_b                                                         # separate simulated PayPal records
+    assert {n["id"] for n in c.get("/api/merchant/notices", headers=A).json()}.isdisjoint(
+        {n["id"] for n in c.get("/api/merchant/notices", headers=B).json()})       # separate inboxes
+    c.post(f"/api/alive/{db.get('cases', a['id'])['objection_token']}")           # judge A plays the living person
+    k = run(B)                                                                    # judge B starts over: not blocked
+    assert k["status"] == "NOTIFIED" and not any(f["critical"] for f in k["network"]["flags"])
+    c.post("/api/demo/reset", headers=A)                                          # judge A resets
+    assert db.get("cases", b["id"]) is not None                                   # judge B's run is untouched
+    assert c.get("/api/audit/verify").json()["ok"]
