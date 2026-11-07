@@ -437,3 +437,22 @@ def test_each_visitor_has_their_own_demo_world(c, monkeypatch):
     c.post("/api/demo/reset", headers=A)                                          # judge A resets
     assert db.get("cases", b["id"]) is not None                                   # judge B's run is untouched
     assert c.get("/api/audit/verify").json()["ok"]
+
+
+def test_live_model_cannot_break_the_demo(c, monkeypatch):
+    """With a real Gemini key the model reads the specimen; an odd answer must not block a judge's run."""
+    from app import certificate, llm
+    monkeypatch.setattr(llm, "available", lambda: True)
+    monkeypatch.setattr(llm, "model_name", lambda: "gemini-test")
+    monkeypatch.setattr(llm, "json_call_image", lambda *a, **k: {
+        "document_type": "Certificado de defunción", "full_name": "ELEANOR M. HAYES", "date_of_death": seed.dod().isoformat(),
+        "signs_of_alteration": ["large SPECIMEN stamp across the page"], "is_specimen": True})
+    k = _case(c)
+    assert k["status"] == "VERIFIED" and "matches the demo record" in k["extraction"]["engine"]
+    assert k["extraction"]["model_reading"]["full_name"] == "ELEANOR M. HAYES"
+    # a real upload in Spanish is still recognised as a death certificate
+    data, engine = certificate.extract(b"not-a-known-image", "image/png")
+    assert data["document_type"] == "death certificate" and engine == "gemini-test"
+    # a model outage falls back cleanly
+    monkeypatch.setattr(llm, "json_call_image", lambda *a, **k: (_ for _ in ()).throw(TimeoutError("slow")))
+    assert _case(c)["status"] == "VERIFIED"

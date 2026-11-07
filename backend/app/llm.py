@@ -21,8 +21,33 @@ def _config() -> tuple[str | None, str | None, str]:
     if os.getenv("OPENAI_API_KEY"):
         return os.getenv("OPENAI_API_KEY"), os.getenv("LLM_BASE_URL"), os.getenv("LLM_MODEL", "gpt-4.1-mini")
     if os.getenv("GEMINI_API_KEY"):
-        return os.getenv("GEMINI_API_KEY"), GEMINI_URL, os.getenv("LLM_MODEL", "gemini-2.5-flash")
+        return os.getenv("GEMINI_API_KEY"), GEMINI_URL, os.getenv("LLM_MODEL") or _working.get("gemini") or GEMINI_MODELS[0]
     return None, None, "offline-heuristic"
+
+
+# Gemini 2.5 was deprecated on 2 Nov 2026 (traffic reroutes on 1 Dec) and new keys may not reach it at all,
+# so try current models first and remember the first one this key can actually use.
+GEMINI_MODELS = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-2.5-flash"]
+_working: dict[str, str] = {}
+
+
+def _create(**kw):
+    """chat.completions.create with model fallback for Gemini; the chosen model sticks for the process."""
+    key, base, model = _config()
+    if base != GEMINI_URL or os.getenv("LLM_MODEL") or "gemini" in _working:
+        return client().chat.completions.create(model=model, **kw)
+    last: Exception | None = None
+    for m in GEMINI_MODELS:
+        try:
+            r = client().chat.completions.create(model=m, **kw)
+            _working["gemini"] = m
+            return r
+        except Exception as exc:  # noqa: BLE001  (404 model not found / 403 not allowed -> next model)
+            last = exc
+            code = getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+            if code not in (400, 403, 404):
+                raise
+    raise last  # type: ignore[misc]
 
 
 def available() -> bool:
@@ -37,7 +62,9 @@ def client():
     from openai import OpenAI
 
     key, base, _ = _config()
-    return OpenAI(api_key=key, base_url=base) if base else OpenAI(api_key=key)
+    # A judge is waiting on every call: fail fast and let the offline fallbacks take over.
+    kw = {"api_key": key, "timeout": float(os.getenv("LLM_TIMEOUT", "25")), "max_retries": 1}
+    return OpenAI(base_url=base, **kw) if base else OpenAI(**kw)
 
 
 def _extract_json(text: str) -> dict:
@@ -53,8 +80,7 @@ def json_call(system: str, user: str, temperature: float = 0.1) -> dict:
     key, _, model = _config()
     if not key:
         raise RuntimeError("no LLM configured")
-    resp = client().chat.completions.create(
-        model=model,
+    resp = _create(
         temperature=temperature,
         response_format={"type": "json_object"},
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -70,8 +96,7 @@ def json_call_image(system: str, user: str, image_bytes: bytes, mime: str = "ima
     if not key:
         raise RuntimeError("no LLM configured")
     url = f"data:{mime};base64,{base64.b64encode(image_bytes).decode()}"
-    resp = client().chat.completions.create(
-        model=model,
+    resp = _create(
         temperature=0,
         response_format={"type": "json_object"},
         messages=[{"role": "system", "content": system},
@@ -85,8 +110,8 @@ def text_call(system: str, user: str, temperature: float = 0.4) -> str:
     key, _, model = _config()
     if not key:
         raise RuntimeError("no LLM configured")
-    resp = client().chat.completions.create(
-        model=model, temperature=temperature,
+    resp = _create(
+        temperature=temperature,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
     )
     return (resp.choices[0].message.content or "").strip()

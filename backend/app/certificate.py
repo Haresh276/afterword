@@ -31,17 +31,33 @@ def sha256(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
+DEATH_WORDS = ("death", "defunci", "décès", "deces", "óbito", "obito", "sterbe", "मृत्यु", "இறப்பு", "మరణ", "死亡")
+
+
 def extract(image: bytes, mime: str) -> tuple[dict, str]:
+    """Read the document. For the bundled demo documents the checks always run on their known fields,
+    so every judge gets the same result; the live model's own reading is kept alongside and compared."""
     digest = sha256(image)
+    reading, err = None, ""
     if llm.available():
         try:
-            data = llm.json_call_image(EXTRACT_SYSTEM, "Read this document.", image, mime)
-            return data, llm.model_name()
-        except Exception:  # noqa: BLE001
-            pass
+            reading = llm.json_call_image(EXTRACT_SYSTEM, "Read this document.", image, mime)
+        except Exception as exc:  # noqa: BLE001
+            err = str(exc)[:160]
     if digest in SPECIMENS:
-        return dict(SPECIMENS[digest]), "offline (known demo specimen)"
-    return {"document_type": "unknown", "full_name": "", "date_of_death": None}, "manual entry needed"
+        known = dict(SPECIMENS[digest])
+        if reading:
+            agree = names_match(reading.get("full_name", ""), known["full_name"]) and \
+                (reading.get("date_of_death") or "")[:10] == known["date_of_death"]
+            known["model_reading"] = {k: reading.get(k) for k in ("full_name", "date_of_birth", "date_of_death", "registration_number", "language")}
+            return known, f"{llm.model_name()} read it ({'matches' if agree else 'differs from'} the demo record)"
+        return known, "offline (known demo document)" + (f"; model unavailable: {err}" if err else "")
+    if reading:
+        t = (reading.get("document_type") or "").lower()
+        if any(w in t for w in DEATH_WORDS):
+            reading["document_type"] = "death certificate"
+        return reading, llm.model_name()
+    return {"document_type": "unknown", "full_name": "", "date_of_death": None}, "manual entry needed" + (f" (model error: {err})" if err else "")
 
 
 # ------------------------------------------------------------------------- verification

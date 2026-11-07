@@ -143,11 +143,12 @@ def to_events(choice_msg: dict, usage: dict | None, model: str) -> list[dict]:
 def respond(body: dict):
     req = to_chat(body)
     try:
-        r = llm.client().chat.completions.create(**req)
+        req.pop("model", None)
+        r = llm._create(**req)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"error": {"message": f"Model call failed: {str(exc)[:400]}"}}, status_code=502)
     msg = r.choices[0].message.model_dump() if r.choices else {"content": ""}
-    events = to_events(msg, r.usage.model_dump() if getattr(r, "usage", None) else None, req["model"])
+    events = to_events(msg, r.usage.model_dump() if getattr(r, "usage", None) else None, llm.model_name())
 
     def sse():
         for e in events:
