@@ -73,6 +73,7 @@ async def main():
         ctx = await b.new_context(viewport={"width": 1440, "height": 900}, record_video_dir=str(OUT / "raw"),
                                   record_video_size={"width": 1440, "height": 900})
         await ctx.add_init_script(CURSOR)
+        await ctx.add_init_script("try { localStorage.setItem('aw_tour_closed', '1') } catch (e) {}")
         pg = await ctx.new_page()
         await pg.goto(U)
         await fresh(pg)

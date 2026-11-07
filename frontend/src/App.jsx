@@ -4,6 +4,7 @@ import Family from './Family'
 import Merchant from './Merchant'
 import Lab from './Lab'
 import Alive from './Alive'
+import Tour from './Tour'
 
 export default function App() {
   const [world, setWorld] = useState(() => ({ '#business': 'merchant', '#lab': 'lab' }[location.hash] || 'family'))
@@ -42,10 +43,11 @@ export default function App() {
               : 'No PayPal keys on this server: the demo runs on a PayPal simulator'}>
               <i className="dot" style={{ background: status.paypal_mode === 'sandbox' || status.paypal_keys ? '#2f5d52' : '#8f621a' }} />
               {status.paypal_mode === 'sandbox' ? 'PayPal sandbox' : status.paypal_keys ? 'PayPal sandbox connected · demo on simulator' : 'PayPal simulator'}</span>
-            <span><i className="dot" style={{ background: status.llm_live ? '#2f5d52' : '#8f621a' }} />{status.llm}</span>
+            <span><i className="dot" style={{ background: status.llm_live ? '#2f5d52' : '#8f621a' }} />{status.llm_live ? `AI: ${status.llm}` : 'AI offline (no key)'}</span>
           </div>
         )}
       </header>
+      {!alive && <Tour go={(w) => { setWorld(w); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />}
       {alive ? <Alive token={alive[1]} /> : world === 'family' ? <Family notify={notify} status={status} /> : world === 'lab' ? <Lab notify={notify} /> : <Merchant notify={notify} status={status} />}
       {toast && <div role="status" className={`toast ${toast.err ? 'err' : ''}`}>{toast.msg}</div>}
     </>
