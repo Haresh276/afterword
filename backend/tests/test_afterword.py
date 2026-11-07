@@ -236,6 +236,13 @@ def _notify_with_window(c, monkeypatch, seconds):
     return c.post(f"/api/cases/{k['id']}/notify").json()
 
 
+def _fast_forward():
+    """Pretend the objection window has passed (instead of sleeping, so slow CI machines can't flake)."""
+    past = db.later(seconds=-1)
+    for a in db.query("SELECT id FROM pending_actions WHERE not_before IS NOT NULL AND status='PENDING'"):
+        db.update("pending_actions", a["id"], {"not_before": past})
+
+
 def _sub_status(mid):
     sid = db.query("SELECT paypal_subscription_id FROM merchant_customers WHERE merchant_id=?", (mid,))[0]["paypal_subscription_id"]
     return pp.call("show_subscription_details", {"subscription_id": sid}, actor="test")["status"]
@@ -244,7 +251,7 @@ def _sub_status(mid):
 def test_pause_now_irreversible_waits_for_window(c, monkeypatch):
     import time
     from app import merchant
-    k = _notify_with_window(c, monkeypatch, 4)
+    k = _notify_with_window(c, monkeypatch, 60)
     st = {f["merchant_name"]: f for f in k["findings"] if f["notice_id"]}
     assert st["StreamBox"]["status"] == "PAUSED" and st["StreamBox"]["notice"]["paused"]
     assert _sub_status("m_streambox") == "SUSPENDED"            # next charge already stopped
@@ -254,8 +261,8 @@ def test_pause_now_irreversible_waits_for_window(c, monkeypatch):
     cancel = db.query("SELECT id FROM pending_actions WHERE tool='cancel_subscription' AND merchant_id='m_streambox'")[0]["id"]
     with pytest.raises(pp.WindowOpen):
         pp.approve(cancel, "too-early")
-    time.sleep(4.3)
-    merchant.tick()  # the server ticker may already have done it
+    _fast_forward()
+    merchant.tick()
     k = c.get(f"/api/cases/{k['id']}").json()
     st = {f["merchant_name"]: f["status"] for f in k["findings"] if f["notice_id"]}
     assert st["StreamBox"] == "CLOSED" and _sub_status("m_streambox") == "CANCELLED"
@@ -265,11 +272,11 @@ def test_pause_now_irreversible_waits_for_window(c, monkeypatch):
 def test_human_preapproval_runs_after_window(c, monkeypatch):
     import time
     from app import merchant
-    _notify_with_window(c, monkeypatch, 4)
+    _notify_with_window(c, monkeypatch, 60)
     nid = c.get("/api/merchant/notices", params={"merchant_id": "m_dailyledger"}).json()[0]["id"]
     out = c.post(f"/api/merchant/notices/{nid}/approve-all").json()
     assert out["status"] == "PAUSED" and len(out["scheduled"]) == 2
-    time.sleep(4.3)
+    _fast_forward()
     merchant.tick()
     assert db.get("notices", nid)["status"] == "CLOSED"
 
