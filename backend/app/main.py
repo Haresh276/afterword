@@ -508,6 +508,14 @@ def merchant_stats(mid: str, request: Request):
             "open": len([r for r in rows if r["status"] in ("RECEIVED", "IN_REVIEW", "ACTIONED")])}
 
 
+@app.get("/api/merchants/{mid}/mcp")
+def merchant_mcp(mid: str):
+    """What a business needs to plug its own AI agent into Afterword over MCP (demo: shown in its console)."""
+    db.get("merchants", mid) or _404("merchant")
+    return {"endpoint": "/mcp/", "merchant_id": mid, "merchant_key": mcp_server.merchant_key(mid),
+            "tools": ["list_notices", "get_notice", "verify_notice", "check_customer_before_collecting"]}
+
+
 class MerchantPatch(BaseModel):
     auto_close: bool | None = None
     auto_refund_cap: float | None = None

@@ -141,6 +141,33 @@ function Notice({ id, onClose, notify, reload }) {
   )
 }
 
+const seed_email = 'eleanor.hayes@example.com'
+
+function McpPanel({ mid, email }) {
+  const [info, setInfo] = useState(null)
+  const [out, setOut] = useState(null)
+  const [show, setShow] = useState(false)
+  useEffect(() => { setOut(null); api.get(`/api/merchants/${mid}/mcp`).then(setInfo).catch(() => {}) }, [mid])
+  if (!info) return null
+  const call = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'check_customer_before_collecting', arguments: { merchant_id: mid, merchant_key: show ? info.merchant_key : 'awk_…', paypal_email: email } } }
+  const run = async () => {
+    const body = { ...call, params: { ...call.params, arguments: { ...call.params.arguments, merchant_key: info.merchant_key } } }
+    const t0 = performance.now()
+    const r = await fetch(info.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify(body) }).then((x) => x.json())
+    setOut({ ms: Math.round(performance.now() - t0), result: JSON.parse(r.result?.content?.[0]?.text || '{}') })
+  }
+  return (
+    <details className="card fx" style={{ marginTop: 12 }}>
+      <summary><strong>Connect your own AI agent (MCP)</strong> <span className="tiny faint">· read-only, this business's notices only</span></summary>
+      <p className="small muted" style={{ margin: '8px 0' }}>Point your support, billing or collections agent at <code>{location.origin}{info.endpoint}</code> with this business's key. Tools: {info.tools.join(', ')}. None of them can move money.</p>
+      <div className="row small"><span className="grow">Key: <code>{show ? info.merchant_key : 'awk_••••••••'}</code></span><button className="btn quiet sm" onClick={() => setShow(!show)}>{show ? 'Hide' : 'Show'}</button></div>
+      <pre className="tool" style={{ whiteSpace: 'pre-wrap', margin: '8px 0', fontSize: 12 }}>POST {info.endpoint} {JSON.stringify(call)}</pre>
+      <button className="btn sm" onClick={run}>Ask, as your billing agent, before retrying a failed charge</button>
+      {out && <pre className="tool" style={{ whiteSpace: 'pre-wrap', marginTop: 8, fontSize: 12 }}>{JSON.stringify(out.result)}{'\n'}Answered by the real MCP server in {out.ms} ms</pre>}
+    </details>
+  )
+}
+
 export default function Merchant({ notify, status }) {
   const [merchants, setMerchants] = useState([])
   const [sel, setSel] = useState('m_dailyledger')
@@ -213,7 +240,7 @@ export default function Merchant({ notify, status }) {
                 <div><b className="num">{stats.open}</b><span>waiting on your team</span></div>
               </div>
             )}
-            <p className="tiny faint" style={{ margin: '10px 0 0' }}>Your own support agent can read and verify these notices over MCP at <code>/mcp</code> (tools: list_notices, get_notice, verify_notice). It can't move money.</p>
+            {m && <McpPanel mid={m.id} email={seed_email} />}
             {rows.length === 0 ? <div className="card" style={{ marginTop: 16 }}><p style={{ margin: 0 }} className="muted">No notices yet. When a family sends one from "For families", it arrives here within seconds.</p></div> : (
               <div className="grid-wrap">
                 <AgGridReact theme={theme} rowData={rows} columnDefs={cols} getRowId={(p) => p.data.id}
