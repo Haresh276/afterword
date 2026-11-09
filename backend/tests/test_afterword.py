@@ -469,22 +469,20 @@ def test_slow_model_trips_the_breaker_and_nobody_waits(c, monkeypatch):
     """A hanging model is tried once; after that every AI step answers instantly from the offline path."""
     import time as _t
     from app import llm
+    from app import gemini_native
     calls = []
 
-    class Hang:
-        class chat:
-            class completions:
-                @staticmethod
-                def create(**kw):
-                    calls.append(kw["model"])
-                    raise TimeoutError("Request timed out.")
+    def hang(model, timeout, kw):
+        calls.append(model)
+        raise TimeoutError("Request timed out.")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    monkeypatch.setattr(llm, "client", lambda timeout=None: Hang())
+    monkeypatch.setattr(llm, "_gemini", hang)
+    monkeypatch.setattr(gemini_native, "list_models", lambda key, timeout=10.0: ["gemini-9-flash", "gemini-flash-latest"])
     monkeypatch.setitem(llm._state, "down_until", 0.0)
     monkeypatch.setitem(llm._state, "probed", False)
     monkeypatch.setattr(llm, "_working", {})
     r = llm.probe()
-    assert r["available"] and not r["healthy"] and len(r["tries"]) == len(llm.GEMINI_MODELS)
+    assert r["available"] and not r["healthy"] and calls == ["gemini-9-flash", "gemini-flash-latest"]
     assert "test-key" not in str(r)                                  # the key is never echoed back
     n = len(calls)
     t0 = _t.time()
@@ -494,3 +492,23 @@ def test_slow_model_trips_the_breaker_and_nobody_waits(c, monkeypatch):
     assert c.get("/api/status").json()["llm_live"] is False
     monkeypatch.setitem(llm._state, "down_until", 0.0)
     monkeypatch.setitem(llm._state, "probed", False)
+
+
+def test_gemini_native_translation_round_trips_tool_calls():
+    from app import gemini_native as g
+    req = g.to_request({"messages": [{"role": "system", "content": "be brief"},
+                                     {"role": "assistant", "content": None, "tool_calls": [
+                                         {"id": "c1", "type": "function", "function": {"name": "add", "arguments": '{"x": 1}'}}]},
+                                     {"role": "tool", "tool_call_id": "c1", "content": '{"ok": true}'}],
+                        "tools": [{"type": "function", "function": {"name": "add", "parameters": {"type": "object"}}}],
+                        "tool_choice": {"type": "function", "function": {"name": "add"}},
+                        "response_format": {"type": "json_object"}}, "gemini-3.8-flash")
+    assert req["systemInstruction"]["parts"][0]["text"] == "be brief"
+    assert req["contents"][0]["parts"][0]["functionCall"] == {"name": "add", "args": {"x": 1}}
+    assert req["contents"][1]["parts"][0]["functionResponse"]["name"] == "add"      # tool result keeps the call's name
+    assert req["toolConfig"]["functionCallingConfig"] == {"mode": "ANY", "allowedFunctionNames": ["add"]}
+    assert req["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "low"}
+    out = g.from_response({"candidates": [{"content": {"parts": [{"text": "plan", "thought": True}, {"text": "done"},
+                                                                 {"functionCall": {"name": "add", "args": {"x": 2}}}]}}]})
+    m = out.choices[0].message.model_dump()
+    assert m["content"] == "done" and m["tool_calls"][0]["function"]["arguments"] == '{"x": 2}'   # thoughts never leak

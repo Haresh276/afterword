@@ -1,8 +1,8 @@
-"""LLM access through any OpenAI-compatible endpoint.
+"""LLM access. Callers speak Chat Completions; Gemini is reached through its native API (gemini_native.py).
 
 Defaults:
   OPENAI_API_KEY set           -> OpenAI, model gpt-4.1-mini
-  GEMINI_API_KEY set           -> Google Gemini (free tier) via its OpenAI-compatible endpoint
+  GEMINI_API_KEY set           -> Google Gemini, native generateContent, newest flash model the key can use
   LLM_BASE_URL / LLM_MODEL     -> override for anything else
   nothing set                  -> offline heuristics (agents fall back; demo still runs)
 """
@@ -49,7 +49,14 @@ def _effort(model: str) -> dict:
     return {"reasoning_effort": e} if e and e != "default" and model.startswith("gemini-3") else {}
 
 
+def _gemini(model: str, timeout: float | None, kw: dict):
+    from . import gemini_native
+    return gemini_native.create(_config()[0], model, timeout or float(os.getenv("LLM_TIMEOUT", "30")), **kw)
+
+
 def _call(model: str, timeout: float | None, kw: dict):
+    if _config()[1] == GEMINI_URL and os.getenv("LLM_GEMINI_COMPAT") != "1":
+        return _gemini(model, timeout, kw)
     c = client(timeout)
     extra = _effort(model)
     try:
@@ -111,12 +118,21 @@ def probe() -> dict:
     key, base, current = _config()
     if not key:
         return {"available": False}
-    models = GEMINI_MODELS if base == GEMINI_URL and not os.getenv("LLM_MODEL") else [current]
     out = []
+    models = [current]
+    if base == GEMINI_URL and not os.getenv("LLM_MODEL"):
+        models = list(GEMINI_MODELS)
+        try:                                   # ask Google which models this key can use right now
+            from . import gemini_native
+            listed = gemini_native.list_models(key)
+            models = listed[:3] + [m for m in GEMINI_MODELS if m in listed and m not in listed[:3]] or models
+            out.append({"model": "(list models)", "ok": True, "ms": 0, "reply": ", ".join(listed[:6])})
+        except Exception as exc:  # noqa: BLE001
+            out.append({"model": "(list models)", "ok": False, "ms": 0, "error": f"{type(exc).__name__}: {str(exc)[:120]}"})
     for m in models:
         t0 = time.time()
         try:
-            r = _call(m, 20.0, {"messages": [{"role": "user", "content": "Reply with the single word: ok"}], "max_tokens": 256})
+            r = _call(m, 20.0, {"messages": [{"role": "user", "content": "Reply with the single word: ok"}]})
             ms = int((time.time() - t0) * 1000)
             out.append({"model": m, "ok": True, "ms": ms, "reply": (r.choices[0].message.content or "")[:20]})
             if base == GEMINI_URL and not os.getenv("LLM_MODEL"):
@@ -127,8 +143,8 @@ def probe() -> dict:
             out.append({"model": m, "ok": False, "ms": int((time.time() - t0) * 1000),
                         "error": f"{type(exc).__name__} {_status_code(exc) or ''}: {str(exc)[:160]}".replace(key, "***")})
     _state["probed"] = True
-    if not any(o["ok"] for o in out):
-        _mark(False, err=RuntimeError(out[-1]["error"] if out else "no models"))
+    if not any(o["ok"] and not o["model"].startswith("(") for o in out):
+        _mark(False, err=RuntimeError(next((o["error"] for o in reversed(out) if not o["ok"]), "no models")))
     return {"available": True, "chosen": _working.get("gemini", current), "tries": out, **state()}
 
 
