@@ -148,6 +148,28 @@ def probe() -> dict:
     return {"available": True, "chosen": _working.get("gemini", current), "tries": out, **state()}
 
 
+def time_one(model: str, effort: str = "") -> dict:
+    if not re.fullmatch(r"[a-z0-9.\-]+", model) or not available():
+        return {"ok": False, "error": "bad model name or no key"}
+    old = os.environ.get("LLM_REASONING_EFFORT")
+    t0 = time.time()
+    try:
+        if effort:
+            os.environ["LLM_REASONING_EFFORT"] = effort
+        r = _call(model, 25.0, {"messages": [{"role": "user", "content": "Reply with the single word: ok"}]})
+        return {"model": model, "effort": effort or "default", "ok": True, "ms": int((time.time() - t0) * 1000),
+                "reply": (r.choices[0].message.content or "")[:20]}
+    except Exception as exc:  # noqa: BLE001
+        return {"model": model, "effort": effort or "default", "ok": False, "ms": int((time.time() - t0) * 1000),
+                "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+    finally:
+        if effort:
+            if old is None:
+                os.environ.pop("LLM_REASONING_EFFORT", None)
+            else:
+                os.environ["LLM_REASONING_EFFORT"] = old
+
+
 def keep_probing(stop: "threading.Event") -> None:
     """Background loop: probe once at startup, then re-probe whenever the model is down, so a slow or
     failing model never makes a visitor wait and a recovered one is picked up again within COOLDOWN."""

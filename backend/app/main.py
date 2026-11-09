@@ -580,8 +580,11 @@ def insights_rows():
 
 
 @app.get("/api/llm/ping")
-async def llm_ping():
-    """Which model this server can reach right now, and how fast (never shows the key)."""
+async def llm_ping(model: str = "", effort: str = ""):
+    """Which model this server can reach right now, and how fast (never shows the key).
+    ?model=&effort= times one model at one thinking level without changing what the server uses."""
+    if model:
+        return await asyncio.to_thread(llm.time_one, model[:60], effort[:12])
     return await asyncio.to_thread(llm.probe)
 
 
