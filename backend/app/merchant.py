@@ -344,7 +344,11 @@ def finalize(notice_id: str) -> dict:
                 db.update("merchant_customers", cust["id"], {"status": "DECEASED", "emails_suppressed": 1})
         outcome["emails_stopped"] = True
         vals["reply"] = letters.merchant_reply(m, n, outcome)
+        head = db.query("SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1")
         receipt = {"protocol": notices.RECEIPT_PROTOCOL, "notice_id": notice_id, "merchant": {"id": m["id"], "name": m["name"]},
+                   # The audit chain's head at closing, under the merchant's signature: rebuilding the chain
+                   # from a raw database file can't match a head that is already signed into receipts.
+                   "audit_chain_head": {"row": head[0]["id"], "sha256": head[0]["hash"]} if head else None,
                    "outcome": outcome, "closed_at": vals["closed_at"],
                    "approved_by": sorted({a["decided_by"] for a in done if a.get("decided_by")})}
         vals.update(outcome=outcome, receipt=receipt, receipt_sig=notices.sign(receipt, party=m["id"]))

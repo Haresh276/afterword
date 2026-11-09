@@ -9,8 +9,10 @@
    (the text itself can't be recovered from it) and a single anomaly score.
 3. Metadata. Editing-software tags in EXIF/PNG text (Photoshop, GIMP, Canva...).
 
-ELA is a known-weak signal (screenshots, PNGs and heavy re-compression all confuse it), so it is
-advisory and never blocks on its own. pHash reuse with a different name *does* block.
+ELA is a known-weak signal (screenshots, PNGs and heavy re-compression all confuse it), so a weak
+anomaly is advisory; only a strong one (peak z above 15) blocks. A byte-identical certificate, or a
+look-alike carrying the same registration number, reused for a different person *does* block; a
+look-alike alone goes to a person.
 """
 from __future__ import annotations
 

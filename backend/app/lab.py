@@ -175,7 +175,7 @@ def run(sid: str, ingest: Callable[[str, bytes, str], dict], session: str = "") 
             return _result(sid, True, "Append-only hash chain", [
                 f"Tried to rewrite audit row #{row['id']} ({row['action']})", f"SQLite refused: {exc}",
                 f"Chain check: {chain['rows_checked']} rows, intact = {chain['ok']}",
-                "Even with direct file access, editing a row breaks every later SHA-256 link"], t0)
+                "Editing a row through the app breaks every later SHA-256 link. Someone with the raw database file could rebuild the chain, so each closure receipt also records the chain head at closing"], t0)
 
     if sid == "inflated_claim":
         rec = (db.query("SELECT * FROM merchant_customers WHERE merchant_id='m_streambox' AND session=?", (session,))
