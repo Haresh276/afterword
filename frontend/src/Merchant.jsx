@@ -92,7 +92,7 @@ function Notice({ id, onClose, notify, reload }) {
             {m.found ? (
               <dl className="kv" style={{ marginTop: 8 }}>
                 {m.plan && <><dt>Plan</dt><dd>{m.plan}</dd></>}
-                <dt>Status on PayPal</dt><dd>{m.status}</dd>
+                <dt>Status on PayPal when checked</dt><dd>{m.status}</dd>
                 {m.paypal_name !== undefined && <><dt>Subscriber on PayPal</dt><dd>{m.paypal_name} · {m.paypal_email}</dd></>}
                 {m.to && <><dt>Invoice sent to</dt><dd>{m.to}</dd></>}
                 {m.charges_after_death && <><dt>Charges after death</dt><dd>{m.charges_after_death.length ? m.charges_after_death.map((c) => `${money(c.amount)} on ${c.time.slice(0, 10)}`).join(', ') : 'none'}</dd></>}
@@ -113,6 +113,12 @@ function Notice({ id, onClose, notify, reload }) {
             <ul className="checks" style={{ marginTop: 6 }}>
               {a.policy_checks.map((c, i) => <li key={i}><span className={c.passed ? 'ok' : 'no'}>{c.passed ? '✓' : '✕'}</span><span>{c.check}</span><span className="d">{c.detail}</span></li>)}
             </ul>
+            {a.status === 'FAILED' && (
+              <div className="row" style={{ marginTop: 6 }}>
+                <span className="small no grow">PayPal didn't confirm: {(a.result || '').slice(0, 120)}</span>
+                <button className="btn sm" disabled={busy} onClick={() => decide(() => api.post(`/api/actions/${a.id}/retry`))}>Retry safely</button>
+              </div>
+            )}
             {a.status === 'PENDING' && !a.preapproved_by && (
               <div className="row" style={{ marginTop: 6 }}>
                 <button className="btn sm" disabled={busy || a.policy_checks.some((c) => !c.passed)} onClick={() => decide(() => api.post(`/api/actions/${a.id}/approve`))}>Approve this</button>

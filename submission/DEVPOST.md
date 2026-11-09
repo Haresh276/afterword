@@ -47,19 +47,20 @@ The first question we asked was the dangerous one: what stops someone reporting 
   - **Bryntum Scheduler** for the family timeline.
 - **Deployment and proof.**
   - Docker on **Render** (Blueprint).
-  - 38 tests, with CI on Linux, Windows and macOS (Python 3.11–3.13).
+  - 39 tests, with CI on Linux, Windows and macOS (Python 3.11–3.13).
   - `scripts/sandbox_run.py` runs the whole flow on real PayPal sandbox subscriptions and records the evidence.
 
 ## Challenges we ran into
 - **Griefing.** Any "report a death" product can be weaponised. We made every irreversible step wait, put the wait in the gateway rather than the UI, and gave the subject a one-click veto.
 - **A fraudster could lock out the real family.** If someone submits an edited copy first, the genuine family's case would match it. A reuse flag is now critical only if the other case *passed*.
 - **A hosted demo on real money objects gets used up.** The first judge would cancel the sandbox subscriptions for everyone else. So the shared demo runs on a faithful copy of the PayPal endpoints, every visitor gets a private demo world, and a live-check button and a recorded full sandbox run prove the same code on real PayPal.
+- **Transient PayPal failures.** A timeout used to leave billing paused forever. Now transient failures are retried under the same action id, so PayPal sees the same Request-Id and never does anything twice.
 - **Gemini on a free key.** Through the OpenAI-compatibility endpoint, Gemini 3.x calls hung for 20+ seconds from Render. We moved to the native API with minimal thinking (under a second), pick the model from Google's live model list, and added a circuit breaker.
 - **Toolkit gaps and packaging.** The Python toolkit has no refund, suspend or transactions tool, so we call those endpoints through its authenticated client, behind the same approval gate. Its pinned extras don't install on Python 3.13+, so we install its core alone.
 
 ## Accomplishments that we're proud of
 - **A reversible-first, two-phase close** with a proof-of-life veto, enforced in the payment gateway rather than the UI.
-- **An agent that investigates but structurally can't spend.**
+- **An agent that investigates but structurally can't spend.** On the hosted demo, we told it (inside the notice) to approve a $5,000 refund to an attacker. Gemini checked PayPal and recommended rejecting: the charge didn't exist.
 - **A red-team page** judges can attack themselves.
 - **Letters that are kind and specific**, in the family's language.
 

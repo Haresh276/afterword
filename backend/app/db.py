@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS pending_actions (
     phase TEXT,               -- now (reversible) | after_window (irreversible)
     not_before TEXT,          -- the gateway refuses to run it earlier (objection window)
     preapproved_by TEXT,      -- a person approved it early; it runs when the window passes
+    attempts INTEGER,         -- PayPal attempts so far (transient failures are retried with the same Request-Id)
     created_at TEXT, decided_at TEXT
 );
 CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT);

@@ -604,6 +604,19 @@ def approve(aid: str, request: Request):
     return a
 
 
+@app.post("/api/actions/{aid}/retry")
+def retry_action(aid: str, request: Request):
+    _own_action(aid, request)
+    try:
+        a = pp.retry(aid, "human (merchant support)")
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"PayPal call failed again: {e}") from e
+    merchant.finalize(a["notice_id"])
+    return a
+
+
 @app.post("/api/actions/{aid}/reject")
 def reject(aid: str, request: Request, body: Decision | None = None):
     _own_action(aid, request)

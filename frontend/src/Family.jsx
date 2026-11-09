@@ -269,7 +269,7 @@ function Board({ c, windowText }) {
           return (
             <div className="m" key={f.id}>
               <span className="m-name">{f.merchant_name}</span>
-              <span className="num small">{f.status === 'CLOSED' ? (f.kind === 'INVOICE' ? 'invoice cancelled' : f.refunded ? `${money(f.refunded)} refunded` : f.next_charge ? `renewal on ${fmtDate(f.next_charge)} stopped` : 'stopped') : waitingPerson ? <span style={{ color: 'var(--amber)' }}>a person is reviewing</span> : f.status === 'PAUSED' ? (f.kind === 'INVOICE' ? 'held, nothing owed' : 'billing paused') : ''}</span>
+              <span className="num small">{f.status === 'CLOSED' ? (f.kind === 'INVOICE' ? 'invoice cancelled' : f.refunded ? `${money(f.refunded)} refunded` : f.next_charge ? `renewal on ${fmtDate(f.next_charge)} stopped` : 'stopped') : waitingPerson ? <span style={{ color: 'var(--amber)' }}>{f.notice?.paused ? 'billing paused · a person is reviewing' : 'a person is reviewing'}</span> : f.status === 'PAUSED' ? (f.kind === 'INVOICE' ? 'held, nothing owed' : 'billing paused') : ''}</span>
               <div className="track">{TRACK.map((label, i) => <span key={label} className={st[i]}>{f.kind === 'INVOICE' && i === 4 ? 'Settled' : label}</span>)}</div>
               {f.status === 'CLOSED' && (
                 <div className="proofs">

@@ -140,7 +140,7 @@ def build_review(n: dict, m: dict, sig_ok: bool) -> dict:
             cur = t["amount_with_breakdown"]["gross_amount"]["currency_code"]
             after = t["time"][:10] > dod
             proposals.append({"tool": "refund_capture", "amount": amt,
-                              "params": {"capture_id": t["id"], "amount": f"{amt:.2f}", "currency": cur,
+                              "params": {"capture_id": t["id"], "amount": pp.money_str(amt, cur), "currency": cur,
                                          "note": "Refund of a charge taken after the account holder died. We're sorry for your loss."},
                               "rationale": f"Return {cur} {amt:.2f} charged on {t['time'][:10]}, after the date of death",
                               "checks": base_checks + ident + [
@@ -240,10 +240,29 @@ def _mark_waiting(notice_id: str) -> None:
         _set_finding(n, "PAUSED")
 
 
+def _retry_transient() -> int:
+    """PayPal had a hiccup (timeout, 5xx, 429): try again with the same action id, backing off 30 s per attempt."""
+    n = 0
+    for a in db.query("SELECT * FROM pending_actions WHERE status='FAILED' AND notice_id NOT LIKE 'lab%'"):
+        if not pp.is_transient(a):
+            continue
+        wait = 30 * (a.get("attempts") or 1)
+        if a.get("decided_at") and (datetime.now(timezone.utc) - datetime.fromisoformat(a["decided_at"])).total_seconds() < wait:
+            continue
+        try:
+            pp.retry(a["id"], a.get("decided_by") or "system retry")
+            finalize(a["notice_id"])
+            n += 1
+        except Exception:  # noqa: BLE001  (recorded on the action and in the audit log)
+            pass
+    return n
+
+
 def tick() -> int:
     """Runs irreversible steps whose objection window has passed, for merchants on auto-close or
-    actions a person already approved. Called every couple of seconds by the server, and by tests."""
-    ran = 0
+    actions a person already approved, and retries transient PayPal failures. Called every couple of
+    seconds by the server, and by tests."""
+    ran = _retry_transient()
     now = db.now()
     rows = db.query("""SELECT DISTINCT a.notice_id FROM pending_actions a JOIN notices n ON n.id=a.notice_id
                        JOIN merchants m ON m.id=a.merchant_id

@@ -37,6 +37,13 @@ MODE = "sandbox" if HAS_KEYS and os.getenv("AFTERWORD_PAYPAL_MODE", "").lower() 
 APPROVAL_TTL_HOURS = int(os.getenv("AFTERWORD_APPROVAL_TTL_HOURS", "24"))
 
 MONEY_TOOLS = {"cancel_subscription", "refund_capture", "cancel_sent_invoice", "suspend_subscription", "activate_subscription"}
+ZERO_DECIMAL = {"JPY", "HUF", "TWD"}   # PayPal rejects decimals for these currencies
+
+
+def money_str(amount, currency: str) -> str:
+    return f"{round(float(amount)):d}" if (currency or "").upper() in ZERO_DECIMAL else f"{float(amount):.2f}"
+
+
 REVERSIBLE = {"suspend_subscription", "activate_subscription"}  # safe to run during the objection window
 
 
@@ -71,7 +78,7 @@ class _Toolkit:
         if method == "refund_capture":
             body = {"note_to_payer": params.get("note", "")[:255]}
             if params.get("amount"):
-                body["amount"] = {"value": f"{float(params['amount']):.2f}", "currency_code": params["currency"]}
+                body["amount"] = {"value": money_str(params["amount"], params["currency"]), "currency_code": params["currency"]}
             try:
                 return self._rest("POST", f"/v2/payments/captures/{params['capture_id']}/refund", body, request_id)
             except RuntimeError as exc:  # some subscription payments are v1 sales, not v2 captures
@@ -330,6 +337,28 @@ def reject(action_id: str, who: str, reason: str = "") -> dict:
     return db.get("pending_actions", action_id)
 
 
+TRANSIENT = ("timed out", "timeout", "temporarily", "502", "503", "504", "500", "429", "connection", "reset by peer", "unavailable")
+MAX_ATTEMPTS = 3
+
+
+def is_transient(a: dict) -> bool:
+    return a["status"] == "FAILED" and (a.get("attempts") or 0) < MAX_ATTEMPTS and any(t in (a.get("result") or "").lower() for t in TRANSIENT)
+
+
+def retry(action_id: str, who: str) -> dict:
+    """Run a failed action again under the SAME action id, so PayPal receives the same PayPal-Request-Id:
+    if the first attempt actually went through before the error, PayPal returns that result instead of
+    doing it twice. Only failures that look transient (timeouts, 5xx, rate limits) can be retried."""
+    a = db.get("pending_actions", action_id)
+    if not a or not is_transient(a):
+        raise ValueError("only a transient PayPal failure can be retried (and at most 3 attempts)")
+    if not db.claim("pending_actions", action_id, "FAILED", {"status": "PENDING"}):
+        raise ValueError("action is not failed")
+    db.audit(who, f"RETRY {a['tool']}", a["notice_id"], {"action_id": action_id, "attempt": (a.get("attempts") or 0) + 1,
+                                                       "paypal_request_id": f"afterword-{action_id}"})
+    return approve(action_id, who)
+
+
 class WindowOpen(PermissionError):
     """An irreversible action asked to run before the objection window closed."""
     def __init__(self, until: str):
@@ -362,9 +391,10 @@ def approve(action_id: str, who: str) -> dict:
     try:
         result = call(a["tool"], a["params"], actor="paypal_agent", ref=a["notice_id"], approved_action=action_id)
     except Exception as exc:  # noqa: BLE001
-        db.update("pending_actions", action_id, {"status": "FAILED", "result": str(exc)[:1000]})
+        db.update("pending_actions", action_id, {"status": "FAILED", "result": str(exc)[:1000], "attempts": (a.get("attempts") or 0) + 1})
         raise
-    db.update("pending_actions", action_id, {"status": "EXECUTED", "result": json.dumps(result, default=str)[:4000]})
+    db.update("pending_actions", action_id, {"status": "EXECUTED", "result": json.dumps(result, default=str)[:4000],
+                                             "attempts": (a.get("attempts") or 0) + 1})
     return db.get("pending_actions", action_id)
 
 

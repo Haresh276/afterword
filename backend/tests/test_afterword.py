@@ -687,3 +687,31 @@ def test_quota_on_one_model_rotates_to_another(monkeypatch):
     r = llm._create(messages=[{"role": "user", "content": "hi"}])
     assert r.choices[0].message.content == "ok" and used == ["gemini-a", "gemini-b"] and llm._working["gemini"] == "gemini-b"
     assert llm.healthy()
+
+
+def test_transient_paypal_failure_is_retried_with_the_same_request_id(c, monkeypatch):
+    t = pp.transport()
+    sid = t.seed_subscription("x", "A", "B", "a@b.c", 10, "USD", "2026-01-01T00:00:00Z")
+    a = pp.propose(notice_id="n", merchant_id="m", tool="cancel_subscription", params={"subscription_id": sid, "reason": "x"},
+                   rationale="t", proposed_by="t", checks=[{"check": "ok", "passed": True}])
+    real, ids = t.run, []
+
+    def flaky(method, params, request_id=None):
+        ids.append(request_id)
+        if len(ids) == 1:
+            raise RuntimeError("PayPal 503 Service Unavailable")
+        return real(method, params, request_id=request_id)
+    monkeypatch.setattr(t, "run", flaky)
+    with pytest.raises(RuntimeError):
+        pp.approve(a["id"], "r")
+    assert db.get("pending_actions", a["id"])["status"] == "FAILED" and pp.is_transient(db.get("pending_actions", a["id"]))
+    done = pp.retry(a["id"], "r")
+    assert done["status"] == "EXECUTED" and done["attempts"] == 2
+    assert ids == [f"afterword-{a['id']}"] * 2                       # same PayPal-Request-Id both times
+    b = pp.propose(notice_id="n", merchant_id="m", tool="cancel_subscription", params={"subscription_id": "I-NOPE", "reason": "x"},
+                   rationale="t", proposed_by="t", checks=[{"check": "ok", "passed": True}])
+    monkeypatch.setattr(t, "run", real)
+    with pytest.raises(Exception):
+        pp.approve(b["id"], "r")                                       # a real error (no such subscription)...
+    with pytest.raises(ValueError):
+        pp.retry(b["id"], "r")                                         # ...is not retried
