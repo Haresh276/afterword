@@ -493,7 +493,9 @@ async def paypal_webhook(request: Request):
 def merchants(request: Request):
     out = [merchant.rules(m, _session(request)) for m in db.query("SELECT * FROM merchants ORDER BY name")]
     for m in out:
-        m["open"] = db.query("SELECT COUNT(*) AS n FROM notices WHERE merchant_id=? AND status IN ('RECEIVED','IN_REVIEW','ACTIONED')", (m["id"],))[0]["n"]
+        m["open"] = db.query("""SELECT COUNT(*) AS n FROM notices x JOIN cases c ON c.id=x.case_id WHERE x.merchant_id=?
+                                AND x.status IN ('RECEIVED','IN_REVIEW','ACTIONED') AND COALESCE(c.session, '')=?""",
+                             (m["id"], _session(request)))[0]["n"]
     return out
 
 
@@ -539,7 +541,7 @@ def merchant_notices(request: Request, merchant_id: str | None = None):
     sql = """SELECT n.id, n.status, n.created_at, n.received_at, n.closed_at, n.review, n.outcome, n.payload,
                     m.name AS merchant_name, m.id AS merchant_id, m.auto_close
              FROM notices n JOIN merchants m ON m.id = n.merchant_id LEFT JOIN cases c ON c.id = n.case_id
-             WHERE COALESCE(c.session, '') = ?"""
+             WHERE n.case_id IS NOT NULL AND COALESCE(c.session, '') = ?"""
     args: tuple = (_session(request),)
     rows = db.query(sql + (" AND m.id=?" if merchant_id else "") + " ORDER BY n.created_at DESC", args + ((merchant_id,) if merchant_id else ()))
     out = []

@@ -80,7 +80,7 @@ def _simulated(today: date) -> dict:
 def _live() -> dict:
     notices, actions, safety = [], [], []
     for n in db.query("""SELECT n.*, m.name AS merchant, m.category, c.relationship, c.language FROM notices n
-                         JOIN merchants m ON m.id=n.merchant_id LEFT JOIN cases c ON c.id=n.case_id"""):
+                         JOIN merchants m ON m.id=n.merchant_id JOIN cases c ON c.id=n.case_id"""):   # lab notices have no case
         acts = db.query("SELECT * FROM pending_actions WHERE notice_id=?", (n["id"],))
         pause = next((a for a in acts if a["tool"] == "suspend_subscription" and a["status"] == "EXECUTED"), None)
         t0 = datetime.fromisoformat(n["received_at"]) if n["received_at"] else None
