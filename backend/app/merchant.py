@@ -10,6 +10,7 @@ Nothing runs until a person approves, or the merchant's own written auto-close r
 """
 from __future__ import annotations
 
+import json
 import os
 import random
 import threading
@@ -28,10 +29,38 @@ def _delay() -> float:
     return random.uniform(float(lo), float(hi or lo))
 
 
+# ------------------------------------------------------------------------- per-visitor rules
+def rules(m: dict | None, session: str = "") -> dict | None:
+    """A merchant's auto-close rule as this visitor's demo world sees it. On the hosted demo every
+    visitor edits their own copy, so one judge switching a merchant to manual review doesn't change
+    what the next judge sees. The shared world ('') uses the merchants table itself."""
+    if not m or not session:
+        return m
+    raw = db.kv_get(f"mrule:{session}:{m['id']}")
+    return {**m, **json.loads(raw)} if raw else m
+
+
+def set_rules(mid: str, session: str, vals: dict) -> None:
+    if not session:
+        db.update("merchants", mid, vals)
+        return
+    raw = db.kv_get(f"mrule:{session}:{mid}")
+    db.kv_set(f"mrule:{session}:{mid}", json.dumps({**(json.loads(raw) if raw else {}), **vals}))
+
+
+def session_of_notice(n: dict) -> str:
+    c = db.get("cases", n["case_id"]) if n.get("case_id") else None
+    return (c or {}).get("session") or ""
+
+
+def merchant_for(n: dict) -> dict:
+    return rules(db.get("merchants", n["merchant_id"]), session_of_notice(n))
+
+
 # ------------------------------------------------------------------------- receive & review
 def receive(notice_id: str, background: bool = True) -> dict:
     n = db.get("notices", notice_id)
-    m = db.get("merchants", n["merchant_id"])
+    m = merchant_for(n)
     sig_ok = notices.verify(n["payload"], n["signature"])
     db.update("notices", notice_id, {"status": "RECEIVED", "received_at": db.now()})
     db.audit(f"merchant:{m['name']}", "RECEIVED notice", notice_id, {"signature_valid": sig_ok})
@@ -168,7 +197,7 @@ def _autopilot(notice_id: str, delay: bool = True, who: str | None = None) -> No
         n = db.get("notices", notice_id)
         if n["status"] in ("WITHDRAWN", "CLOSED", "REJECTED"):
             return
-        m = db.get("merchants", n["merchant_id"])
+        m = merchant_for(n)
         for a in _due(notice_id):
             if db.get("notices", notice_id)["status"] == "WITHDRAWN" or (db.get("cases", n["case_id"]) or {}).get("objected_at"):
                 return
@@ -202,10 +231,10 @@ def tick() -> int:
                        JOIN merchants m ON m.id=a.merchant_id
                        WHERE a.status='PENDING' AND a.not_before IS NOT NULL AND a.not_before<=?
                          AND n.status NOT IN ('WITHDRAWN','CLOSED','REJECTED')
-                         AND (a.preapproved_by IS NOT NULL OR m.auto_close=1)""", (now,))
+""", (now,))
     for r in rows:
         n = db.get("notices", r["notice_id"])
-        m = db.get("merchants", n["merchant_id"])
+        m = merchant_for(n)
         if not m["auto_close"] or not (n.get("review") or {}).get("auto_eligible"):
             if not all(a.get("preapproved_by") for a in _due(n["id"])):
                 continue
@@ -246,7 +275,7 @@ def approve_all(notice_id: str, who: str = "human") -> dict:
 def withdraw(notice_id: str, reason: str) -> dict:
     """The hub withdrew the notice (the account holder objected). Undo what is reversible, cancel the rest."""
     n = db.get("notices", notice_id)
-    m = db.get("merchants", n["merchant_id"])
+    m = merchant_for(n)
     actor = f"merchant_agent:{m['name']}"
     with _lock(notice_id):
         for a in db.query("SELECT * FROM pending_actions WHERE notice_id=? AND status='PENDING'", (notice_id,)):
@@ -284,7 +313,7 @@ def finalize(notice_id: str) -> dict:
         "invoices_cancelled": [a["params"]["invoice_id"] for a in done if a["tool"] == "cancel_sent_invoice"],
     }
     outcome["refunded_total"] = round(sum(r["amount"] for r in outcome["refunded"]), 2)
-    m = db.get("merchants", n["merchant_id"])
+    m = merchant_for(n)
     if n["status"] == "WITHDRAWN":
         return n
     status = "CLOSED" if done and all(a["status"] == "EXECUTED" for a in acts) else ("ACTIONED" if done else "IN_REVIEW")

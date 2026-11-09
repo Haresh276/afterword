@@ -132,7 +132,7 @@ def to_request(kw: dict, model: str) -> dict:
         schema = (fmt.get("json_schema") or {}).get("schema")
         if schema:
             gen["responseSchema"] = schema
-    level = os.getenv("LLM_REASONING_EFFORT", "low")
+    level = kw.pop("_thinking", None) or os.getenv("LLM_REASONING_EFFORT", "minimal")
     if model.startswith("gemini-3") and level not in ("", "default"):
         gen["thinkingConfig"] = {"thinkingLevel": level}
     elif model.startswith("gemini-2.5-flash"):
@@ -177,7 +177,10 @@ def from_response(data: dict) -> _Obj:
 
 def create(key: str, model: str, timeout: float, **kw) -> _Obj:
     r = httpx.post(f"{BASE}/models/{model}:generateContent", headers=_headers(key),
-                   json=to_request(kw, model), timeout=timeout)
+                   json=to_request(dict(kw), model), timeout=timeout)
+    if r.status_code == 400 and "thinking level" in r.text.lower():      # e.g. a Pro-class model without "minimal"
+        r = httpx.post(f"{BASE}/models/{model}:generateContent", headers=_headers(key),
+                       json=to_request({**kw, "_thinking": "low"}, model), timeout=timeout)
     if r.status_code != 200:
         try:
             msg = r.json().get("error", {}).get("message", r.text)

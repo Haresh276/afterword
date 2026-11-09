@@ -89,6 +89,13 @@ def assess(case_id: str) -> dict:
         # Only a case that actually got through can poison this one. If the other attempt was itself
         # blocked (an edited copy, say), the genuine family must not be locked out by the fraudster.
         passed = o["status"] in ("VERIFIED", "NOTIFIED", "CLOSED")
+        exact_doc = o["certificate_sha256"] == me["certificate_sha256"]
+        if same_doc and not exact_doc and not same_reg and not same_person:
+            # Looks alike but isn't byte-identical and carries a different registration number: two genuine
+            # certificates printed on the same state template can do that. Flag it for a person, don't block.
+            flags.append({"kind": "similar_document", "critical": False, "case": o["id"],
+                          "detail": f"the image looks like the certificate used for {o['deceased_name']}; a person should compare them"})
+            continue
         if same_doc and not same_person:
             flags.append({"kind": "certificate_reused" if passed else "copy_attempt_blocked", "critical": passed, "case": o["id"],
                           "detail": f"the same certificate image was used for {o['deceased_name']} in another case" if passed else

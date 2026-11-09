@@ -85,6 +85,31 @@ def _404(what: str):
     raise HTTPException(404, f"{what} not found")
 
 
+# Each visitor's demo world is private: every route that names a case, notice or action checks that it
+# belongs to the caller's session, and answers "not found" otherwise (no hint that it exists).
+def _own_case(cid: str, request: Request) -> dict:
+    c = db.get("cases", cid)
+    if not c or (c.get("session") or "") != _session(request):
+        _404("case")
+    return c
+
+
+def _own_notice(nid: str, request: Request) -> dict:
+    n = db.get("notices", nid)
+    if not n:
+        _404("notice")
+    _own_case(n["case_id"], request) if n.get("case_id") else _404("notice")
+    return n
+
+
+def _own_action(aid: str, request: Request) -> dict:
+    a = db.get("pending_actions", aid)
+    if not a:
+        _404("action")
+    _own_notice(a["notice_id"], request)
+    return a
+
+
 @app.get("/api/status")
 def status():
     return {"paypal_mode": pp.MODE, "paypal_keys": pp.HAS_KEYS, "llm": llm.model_name(), "llm_live": llm.available() and llm.healthy(),
@@ -124,6 +149,11 @@ def list_cases(request: Request):
 
 
 @app.get("/api/cases/{cid}")
+def read_case(cid: str, request: Request):
+    _own_case(cid, request)
+    return get_case(cid)
+
+
 def get_case(cid: str):
     c = db.get("cases", cid) or _404("case")
     fs = db.query("SELECT * FROM findings WHERE case_id=? ORDER BY rowid", (cid,))
@@ -137,7 +167,7 @@ def get_case(cid: str):
         if n and n.get("receipt"):
             f["notice"]["receipt_valid"] = notices.verify(n["receipt"], n["receipt_sig"], party=n["merchant_id"])
         f["refunded"] = (n["outcome"] or {}).get("refunded_total", 0) if n and n.get("outcome") else 0
-        f["merchant"] = db.get("merchants", f["merchant_id"]) if f["merchant_id"] else None
+        f["merchant"] = merchant.rules(db.get("merchants", f["merchant_id"]), c.get("session") or "") if f["merchant_id"] else None
         if f["status"] == "NOT_ON_NETWORK" and f["selected"] and c.get("certificate_sha256"):
             f["email_draft"] = letters.offline_email(c, f)
     notified = [f for f in fs if f["notice_id"]]
@@ -172,7 +202,8 @@ class CasePatch(BaseModel):
 
 
 @app.patch("/api/cases/{cid}")
-def patch_case(cid: str, body: CasePatch):
+def patch_case(cid: str, body: CasePatch, request: Request):
+    _own_case(cid, request)
     c = db.get("cases", cid) or _404("case")
     if c["status"] in ("NOTIFIED", "CLOSED") and any(v is not None for k, v in body.model_dump().items() if k != "language"):
         raise HTTPException(409, "Notices have been sent; details are locked")
@@ -183,7 +214,8 @@ def patch_case(cid: str, body: CasePatch):
 
 
 @app.post("/api/cases/{cid}/certificate")
-async def upload_certificate(cid: str, file: UploadFile | None = File(None), use_specimen: str = Form("")):
+async def upload_certificate(cid: str, request: Request, file: UploadFile | None = File(None), use_specimen: str = Form("")):
+    _own_case(cid, request)
     db.get("cases", cid) or _404("case")
     if use_specimen == "forged":
         data, mime = seed.make_forged(), "image/jpeg"
@@ -227,7 +259,8 @@ def _reverify(cid: str) -> dict:
 
 
 @app.post("/api/cases/{cid}/activity")
-async def upload_activity(cid: str, file: UploadFile | None = File(None), use_sample: str = Form("")):
+async def upload_activity(cid: str, request: Request, file: UploadFile | None = File(None), use_sample: str = Form("")):
+    _own_case(cid, request)
     c = db.get("cases", cid) or _404("case")
     if not c.get("date_of_death"):
         raise HTTPException(400, "Add the date of death first (from the certificate)")
@@ -265,8 +298,9 @@ class FindingPatch(BaseModel):
 
 
 @app.patch("/api/findings/{fid}")
-def patch_finding(fid: str, body: FindingPatch):
+def patch_finding(fid: str, body: FindingPatch, request: Request):
     f = db.get("findings", fid) or _404("finding")
+    _own_case(f["case_id"], request)
     if f["notice_id"]:
         raise HTTPException(409, "Already notified")
     db.update("findings", fid, {"selected": int(body.selected)})
@@ -274,7 +308,8 @@ def patch_finding(fid: str, body: FindingPatch):
 
 
 @app.post("/api/cases/{cid}/notify")
-def notify(cid: str):
+def notify(cid: str, request: Request):
+    _own_case(cid, request)
     c = get_case(cid)
     v = c.get("verification") or {}
     if v.get("score", 0) < merchant.MIN_SCORE or v.get("blocking"):
@@ -282,8 +317,11 @@ def notify(cid: str):
     if c["status"] == "OBJECTED":
         raise HTTPException(409, "The account holder said they are alive. This case can't be sent.")
     sent = []
-    if not db.get("cases", cid).get("objection_deadline"):
-        token = secrets.token_urlsafe(18)
+    row = db.get("cases", cid)
+    # Every notice gets a full objection window. A family adding one more company after the first window
+    # has passed opens a new window (and a fresh proof-of-life email) instead of refunding at once.
+    if not row.get("objection_deadline") or row["objection_deadline"] <= db.now():
+        token = row.get("objection_token") or secrets.token_urlsafe(18)
         deadline = db.later(seconds=OBJECTION_SECONDS)
         db.update("cases", cid, {"objection_token": token, "objection_deadline": deadline})
         c["objection_deadline"] = deadline
@@ -298,7 +336,7 @@ def notify(cid: str):
     for f in c["findings"]:
         if not f["selected"] or f["notice_id"] or not f["merchant_id"]:
             continue
-        m = db.get("merchants", f["merchant_id"])
+        m = merchant.rules(db.get("merchants", f["merchant_id"]), c.get("session") or "")
         nid = db.new_id("ntc")
         body = notices.build(c, f, m, nid)
         db.insert("notices", {"id": nid, "case_id": cid, "merchant_id": m["id"], "payload": body,
@@ -314,7 +352,8 @@ def notify(cid: str):
 
 
 @app.get("/api/cases/{cid}/timeline")
-def timeline(cid: str):
+def timeline(cid: str, request: Request):
+    _own_case(cid, request)
     """Bryntum Scheduler data: one row per company, charges before and after the death, what Afterword
     did and when, and every charge over the next year that won't be taken."""
     from datetime import date as _date, datetime as _dt, timedelta as _td
@@ -399,7 +438,8 @@ def alive_object(token: str, body: Objection | None = None):
 
 
 @app.get("/api/cases/{cid}/letter")
-def closure_letter(cid: str, language: str | None = None):
+def closure_letter(cid: str, request: Request, language: str | None = None):
+    _own_case(cid, request)
     c = get_case(cid)
     if language:
         c["language"] = language
@@ -409,14 +449,16 @@ def closure_letter(cid: str, language: str | None = None):
 
 
 @app.get("/api/cases/{cid}/record.pdf")
-def record_pdf(cid: str):
+def record_pdf(cid: str, request: Request):
+    _own_case(cid, request)
     c = get_case(cid)
     return Response(closure.build(c), media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="afterword-record-{cid}.pdf"'})
 
 
 @app.get("/api/cases/{cid}/paypal-packet.pdf")
-def paypal_packet(cid: str):
+def paypal_packet(cid: str, request: Request):
+    _own_case(cid, request)
     c = get_case(cid)
     return Response(closure.paypal_packet(c), media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="paypal-deceased-account-{cid}.pdf"'})
@@ -446,8 +488,8 @@ async def paypal_webhook(request: Request):
 
 # =============================================================================== merchant side
 @app.get("/api/merchants")
-def merchants():
-    out = db.query("SELECT * FROM merchants ORDER BY name")
+def merchants(request: Request):
+    out = [merchant.rules(m, _session(request)) for m in db.query("SELECT * FROM merchants ORDER BY name")]
     for m in out:
         m["open"] = db.query("SELECT COUNT(*) AS n FROM notices WHERE merchant_id=? AND status IN ('RECEIVED','IN_REVIEW','ACTIONED')", (m["id"],))[0]["n"]
     return out
@@ -472,12 +514,14 @@ class MerchantPatch(BaseModel):
 
 
 @app.patch("/api/merchants/{mid}")
-def patch_merchant(mid: str, body: MerchantPatch):
+def patch_merchant(mid: str, body: MerchantPatch, request: Request):
     db.get("merchants", mid) or _404("merchant")
     vals = {k: (int(v) if isinstance(v, bool) else v) for k, v in body.model_dump().items() if v is not None}
-    db.update("merchants", mid, vals)
+    if "auto_refund_cap" in vals and not 0 <= vals["auto_refund_cap"] <= 10_000:
+        raise HTTPException(400, "The auto-close limit must be between $0 and $10,000")
+    merchant.set_rules(mid, _session(request), vals)
     db.audit("merchant_admin", "CHANGED auto-close rule", mid, vals)
-    return db.get("merchants", mid)
+    return merchant.rules(db.get("merchants", mid), _session(request))
 
 
 @app.get("/api/merchant/notices")
@@ -498,14 +542,16 @@ def merchant_notices(request: Request, merchant_id: str | None = None):
         r["refund_due"] = (r.pop("review") or {}).get("refund_total", 0)
         r["refunded"] = (r.pop("outcome") or {}).get("refunded_total", 0)
         r["pending"] = db.query("SELECT COUNT(*) AS n FROM pending_actions WHERE notice_id=? AND status='PENDING'", (r["id"],))[0]["n"]
+        r["auto_close"] = (merchant.rules({"id": r["merchant_id"], "auto_close": r["auto_close"]}, _session(request)) or {})["auto_close"]
         out.append(r)
     return out
 
 
 @app.get("/api/merchant/notices/{nid}")
-def merchant_notice(nid: str):
+def merchant_notice(nid: str, request: Request):
+    _own_notice(nid, request)
     n = db.get("notices", nid) or _404("notice")
-    n["merchant"] = db.get("merchants", n["merchant_id"])
+    n["merchant"] = merchant.merchant_for(n)
     n["signature_valid"] = notices.verify(n["payload"], n["signature"])
     n["actions"] = db.query("SELECT * FROM pending_actions WHERE notice_id=? ORDER BY created_at", (nid,))
     return n
@@ -516,13 +562,15 @@ class Decision(BaseModel):
 
 
 @app.post("/api/merchant/notices/{nid}/approve-all")
-def approve_all(nid: str):
+def approve_all(nid: str, request: Request):
+    _own_notice(nid, request)
     db.get("notices", nid) or _404("notice")
     return merchant.approve_all(nid, "human (merchant support)")
 
 
 @app.post("/api/actions/{aid}/approve")
-def approve(aid: str):
+def approve(aid: str, request: Request):
+    _own_action(aid, request)
     who = "human (merchant support)"
     try:
         a = pp.approve(aid, who)
@@ -542,7 +590,8 @@ def approve(aid: str):
 
 
 @app.post("/api/actions/{aid}/reject")
-def reject(aid: str, body: Decision | None = None):
+def reject(aid: str, request: Request, body: Decision | None = None):
+    _own_action(aid, request)
     try:
         a = pp.reject(aid, "human (merchant support)", body.reason if body else "")
     except ValueError as e:
@@ -553,8 +602,18 @@ def reject(aid: str, body: Decision | None = None):
 
 # =============================================================================== audit + demo
 @app.get("/api/audit")
-def audit(limit: int = 300):
-    return db.query("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,))
+def audit(request: Request, limit: int = 300):
+    """The shared world sees the whole log; a demo visitor sees only the rows about their own cases."""
+    s = _session(request)
+    limit = max(1, min(int(limit), 2000))
+    if not s:
+        return db.query("SELECT * FROM audit_log ORDER BY id DESC LIMIT ?", (limit,))
+    refs = [r["id"] for r in db.query("SELECT id FROM cases WHERE session=?", (s,))]
+    refs += [r["id"] for r in db.query("SELECT n.id FROM notices n JOIN cases c ON c.id=n.case_id WHERE c.session=?", (s,))]
+    if not refs:
+        return []
+    marks = ",".join("?" for _ in refs)
+    return db.query(f"SELECT * FROM audit_log WHERE ref IN ({marks}) ORDER BY id DESC LIMIT ?", (*refs, limit))
 
 
 @app.get("/api/audit/verify")
@@ -629,7 +688,12 @@ def demo_reset(request: Request):
     s = _session(request)
     if s:
         seed.reset_session(s)
+        for k in db.query("SELECT k FROM kv WHERE k LIKE ?", (f"mrule:{s}:%",)):
+            db.conn().execute("DELETE FROM kv WHERE k=?", (k["k"],))
+        db.conn().commit()
         return {"ok": True, "scope": "your demo only"}
+    if os.getenv("RENDER") and os.getenv("AFTERWORD_ALLOW_GLOBAL_RESET") != "1":
+        raise HTTPException(403, "On the hosted demo you can only reset your own demo world.")
     db.reset()
     pp._transport = None
     seed.seed_demo()

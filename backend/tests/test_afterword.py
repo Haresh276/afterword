@@ -273,13 +273,19 @@ def test_mcp_tools_for_merchant_agents(c):
     tools = c.post("/mcp/", json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, headers=h).json()["result"]["tools"]
     assert {t["name"] for t in tools} == {"list_notices", "get_notice", "verify_notice", "check_customer_before_collecting"}  # no money tools
     from app import mcp_server
-    assert mcp_server.check_customer_before_collecting("m_streambox", seed.DECEASED["email"]) == {"reported_deceased": False}
+    key = mcp_server.merchant_key("m_streambox")
+    chk = mcp_server.check_customer_before_collecting
+    assert chk("m_streambox", key, seed.DECEASED["email"]) == {"reported_deceased": False}
     k = _case(c)
     c.post(f"/api/cases/{k['id']}/activity", data={"use_sample": "1"})
     c.post(f"/api/cases/{k['id']}/notify")
-    r = mcp_server.check_customer_before_collecting("m_streambox", seed.DECEASED["email"].upper())
+    r = chk("m_streambox", key, seed.DECEASED["email"].upper())
     assert r["reported_deceased"] and r["signature_valid"]
-    assert mcp_server.check_customer_before_collecting("m_streambox", "someone.else@example.com") == {"reported_deceased": False}
+    assert chk("m_streambox", key, "someone.else@example.com") == {"reported_deceased": False}
+    assert "error" in chk("m_streambox", mcp_server.merchant_key("m_fitpulse"), seed.DECEASED["email"])   # another company's key
+    assert "error" in mcp_server.list_notices("m_streambox", "")[0]
+    listed = mcp_server.list_notices("m_streambox", key)
+    assert listed and "email" not in listed[0]["claimant"]            # no family contact details over MCP
 
 
 # --------------------------------------------------------------------- objection window (proof of life)
@@ -562,8 +568,62 @@ def test_gemini_native_translation_round_trips_tool_calls():
     assert req["contents"][0]["parts"][0]["functionCall"] == {"name": "add", "args": {"x": 1}}
     assert req["contents"][1]["parts"][0]["functionResponse"]["name"] == "add"      # tool result keeps the call's name
     assert req["toolConfig"]["functionCallingConfig"] == {"mode": "ANY", "allowedFunctionNames": ["add"]}
-    assert req["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "low"}
+    assert req["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "minimal"}
     out = g.from_response({"candidates": [{"content": {"parts": [{"text": "plan", "thought": True}, {"text": "done"},
                                                                  {"functionCall": {"name": "add", "args": {"x": 2}}}]}}]})
     m = out.choices[0].message.model_dump()
     assert m["content"] == "done" and m["tool_calls"][0]["function"]["arguments"] == '{"x": 2}'   # thoughts never leak
+
+
+def test_visitors_cannot_touch_each_others_cases_or_rules(c, monkeypatch):
+    from app import main
+    monkeypatch.setattr(main, "OBJECTION_SECONDS", 60)
+    A, B = {"X-Afterword-Session": "judge-aaaa-3333"}, {"X-Afterword-Session": "judge-bbbb-4444"}
+    k = c.post("/api/cases", json={"claimant_name": seed.CLAIMANT["name"], "claimant_email": seed.CLAIMANT["email"],
+                                   "relationship": "daughter", "language": "en"}, headers=A).json()
+    c.post(f"/api/cases/{k['id']}/certificate", data={"use_specimen": "1"}, headers=A)
+    c.post(f"/api/cases/{k['id']}/activity", data={"use_sample": "1"}, headers=A)
+    k = c.post(f"/api/cases/{k['id']}/notify", headers=A).json()
+    assert c.get(f"/api/cases/{k['id']}", headers=B).status_code == 404          # B can't read A's case
+    assert c.get(f"/api/cases/{k['id']}/record.pdf", headers=B).status_code == 404
+    assert c.get(f"/api/cases/{k['id']}/record.pdf?session=judge-aaaa-3333").status_code == 200   # PDF links carry it
+    nid = next(f["notice_id"] for f in k["findings"] if f["notice_id"])
+    assert c.get(f"/api/merchant/notices/{nid}", headers=B).status_code == 404
+    aid = db.query("SELECT id FROM pending_actions WHERE notice_id=?", (nid,))[0]["id"]
+    assert c.post(f"/api/actions/{aid}/approve", headers=B).status_code == 404   # ...or approve A's refunds
+    assert c.post(f"/api/actions/{aid}/reject", headers=B).status_code == 404
+    rows_b = c.get("/api/audit", headers=B).json()
+    assert all(r["ref"] != k["id"] for r in rows_b)                              # ...or read A's audit rows
+    assert any(r["ref"] == k["id"] for r in c.get("/api/audit", headers=A).json())
+    c.patch("/api/merchants/m_streambox", json={"auto_close": False}, headers=B)   # B switches StreamBox to manual
+    sb = {m["id"]: m for m in c.get("/api/merchants", headers=A).json()}["m_streambox"]
+    assert sb["auto_close"] == db.get("merchants", "m_streambox")["auto_close"] == 1   # A and the shared world: unchanged
+    assert {m["id"]: m for m in c.get("/api/merchants", headers=B).json()}["m_streambox"]["auto_close"] == 0
+    assert c.patch("/api/merchants/m_streambox", json={"auto_refund_cap": 1e9}, headers=B).status_code == 400
+    monkeypatch.setenv("RENDER", "true")
+    assert c.post("/api/demo/reset").status_code == 403                          # nobody wipes the hosted demo
+    assert c.post("/api/demo/reset", headers=B).status_code == 200
+    assert {m["id"]: m for m in c.get("/api/merchants", headers=B).json()}["m_streambox"]["auto_close"] == 1
+
+
+def test_date_of_death_cannot_be_moved_away_from_the_certificate(c):
+    k = _case(c)
+    assert k["status"] == "VERIFIED"
+    earlier = (seed.dod() - __import__("datetime").timedelta(days=20)).isoformat()
+    k = c.patch(f"/api/cases/{k['id']}", json={"date_of_death": earlier}).json()
+    assert "Details match what the certificate says" in k["verification"]["blocking"]   # more refunds? no.
+    k = c.patch(f"/api/cases/{k['id']}", json={"date_of_death": seed.dod().isoformat()}).json()
+    assert not k["verification"]["blocking"]
+
+
+def test_a_late_notice_gets_its_own_objection_window(c, monkeypatch):
+    from app import main
+    monkeypatch.setattr(main, "OBJECTION_SECONDS", 60)
+    k = _case(c)
+    cid = k["id"]
+    c.post(f"/api/cases/{cid}/activity", data={"use_sample": "1"})
+    db.update("cases", cid, {"objection_deadline": "2000-01-01T00:00:00+00:00"})      # the first window is long gone
+    k = c.post(f"/api/cases/{cid}/notify").json()
+    assert db.get("cases", cid)["objection_deadline"] > db.now()                      # a fresh one opened
+    nb = [a["not_before"] for a in db.query("SELECT not_before FROM pending_actions WHERE not_before IS NOT NULL")]
+    assert nb and all(x > db.now() for x in nb)                                     # nothing irreversible can run yet

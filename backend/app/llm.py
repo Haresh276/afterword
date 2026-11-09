@@ -45,7 +45,7 @@ def _status_code(exc: Exception):
 
 def _effort(model: str) -> dict:
     """Gemini 3.x thinks at 'medium' by default; 'low' is much faster and plenty for these short tasks."""
-    e = os.getenv("LLM_REASONING_EFFORT", "low")
+    e = os.getenv("LLM_REASONING_EFFORT", "minimal")
     return {"reasoning_effort": e} if e and e != "default" and model.startswith("gemini-3") else {}
 
 
@@ -125,14 +125,14 @@ def probe() -> dict:
         try:                                   # ask Google which models this key can use right now
             from . import gemini_native
             listed = gemini_native.list_models(key)
-            models = listed[:3] + [m for m in GEMINI_MODELS if m in listed and m not in listed[:3]] or models
+            models = listed[:5] or models
             out.append({"model": "(list models)", "ok": True, "ms": 0, "reply": ", ".join(listed[:6])})
         except Exception as exc:  # noqa: BLE001
             out.append({"model": "(list models)", "ok": False, "ms": 0, "error": f"{type(exc).__name__}: {str(exc)[:120]}"})
     for m in models:
         t0 = time.time()
         try:
-            r = _call(m, 20.0, {"messages": [{"role": "user", "content": "Reply with the single word: ok"}]})
+            r = _call(m, float(os.getenv("LLM_PROBE_TIMEOUT", "8")), {"messages": [{"role": "user", "content": "Reply with the single word: ok"}]})
             ms = int((time.time() - t0) * 1000)
             out.append({"model": m, "ok": True, "ms": ms, "reply": (r.choices[0].message.content or "")[:20]})
             if base == GEMINI_URL and not os.getenv("LLM_MODEL"):

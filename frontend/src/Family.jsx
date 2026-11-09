@@ -309,7 +309,7 @@ function Letter({ c, notify }) {
         <label className="f" htmlFor="ll" style={{ margin: 0 }}>Language</label>
         <select id="ll" style={{ width: 'auto' }} value={lang} onChange={(e) => setLang(e.target.value)}>{LANGS.map(([k, l]) => <option key={k} value={k} disabled={!runtime.live && !OFFLINE_LANGS.includes(k)}>{langLabel(k, l)}</option>)}</select>
         <span className="grow" />
-        <a className="btn" href={`/api/cases/${c.id}/record.pdf`} target="_blank" rel="noreferrer">Download the record (PDF)</a>
+        <a className="btn" href={`/api/cases/${c.id}/record.pdf?session=${SESSION}`} target="_blank" rel="noreferrer">Download the record (PDF)</a>
       </div>
       <div className="letter-wrap" aria-busy={busy}>
         <div className={`letter ${lang !== 'en' ? 'indic' : ''}`} lang={lang}>{text || ' '}</div>
@@ -406,7 +406,7 @@ export default function Family({ notify, status }) {
         {sent && c.status !== 'OBJECTED' && (
           <div className="card">
             <p style={{ marginTop: 0 }}>PayPal closes a deceased person's account through its own process, and only the executor or administrator can ask. We've filled in the cover sheet it asks for and listed what to attach.</p>
-            <a className="btn" href={`/api/cases/${c.id}/paypal-packet.pdf`} target="_blank" rel="noreferrer">Download the PayPal cover sheet (PDF)</a>
+            <a className="btn" href={`/api/cases/${c.id}/paypal-packet.pdf?session=${SESSION}`} target="_blank" rel="noreferrer">Download the PayPal cover sheet (PDF)</a>
           </div>
         )}
       </Step>

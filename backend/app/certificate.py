@@ -99,6 +99,21 @@ def verify(case: dict, activity_summary: dict | None = None) -> dict:
     add("Date of death is in the past and after date of birth",
         bool(dod and dod <= date.today() and (not dob or dob < dod)),
         f"died {dod or '?'}" + (f", born {dob}" if dob else ""), critical=True)
+    # The case fields drive the refund cut-off (date of death) and who the merchant looks for (name). They
+    # can be corrected by hand, but not away from what the certificate says: that would let anyone move the
+    # date of death to claim more refunds after an honest read.
+    read = {k: ext.get(k) for k in ("full_name", "date_of_death", "registration_number")}
+    if any(read.values()):
+        diffs = []
+        if read["full_name"] and case.get("deceased_name") and not names_match(read["full_name"], case["deceased_name"]):
+            diffs.append(f"name {case['deceased_name']!r} vs certificate {read['full_name']!r}")
+        if read["date_of_death"] and case.get("date_of_death") and str(read["date_of_death"])[:10] != str(case["date_of_death"])[:10]:
+            diffs.append(f"date of death {case['date_of_death']} vs certificate {str(read['date_of_death'])[:10]}")
+        norm = lambda r: re.sub(r"[^A-Za-z0-9]", "", r or "").upper()  # noqa: E731
+        if read["registration_number"] and case.get("registration_number") and norm(read["registration_number"]) != norm(case["registration_number"]):
+            diffs.append(f"registration {case['registration_number']} vs certificate {read['registration_number']}")
+        add("Details match what the certificate says", not diffs, "; ".join(diffs) or "name, date of death and registration agree",
+            1.0, critical=True)
     add("Registration number looks valid", bool(re.fullmatch(r"[A-Za-z0-9/\-]{6,40}", case.get("registration_number") or "")),
         case.get("registration_number") or "none")
     # ---- image forensics (computed in memory at upload; only the summary is kept)
