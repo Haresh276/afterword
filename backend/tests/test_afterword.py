@@ -668,3 +668,22 @@ def test_ai_reviewer_investigates_but_cannot_move_money(c, monkeypatch):
     assert db.get("notices", nid)["review"]["ai_review"]["decision"] == "approve"
     assert not db.query("SELECT 1 FROM audit_log WHERE actor='ai_reviewer' AND (action LIKE 'APPROVED%' OR action LIKE 'paypal.refund%' "
                         "OR action LIKE 'paypal.cancel%' OR action LIKE 'paypal.suspend%')")   # it approved and moved nothing
+
+
+def test_quota_on_one_model_rotates_to_another(monkeypatch):
+    from app import llm, gemini_native as g
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr(llm, "_working", {"gemini": "gemini-a"})
+    monkeypatch.setitem(llm._state, "candidates", ["gemini-a", "gemini-b"])
+    monkeypatch.setitem(llm._state, "down_until", 0.0)
+    used = []
+
+    def fake(model, timeout, kw):
+        used.append(model)
+        if model == "gemini-a":
+            raise g.GeminiError(429, "quota")
+        return g._Obj(choices=[g._Obj(message=g._Obj(content="ok", tool_calls=None))], usage=None)
+    monkeypatch.setattr(llm, "_gemini", fake)
+    r = llm._create(messages=[{"role": "user", "content": "hi"}])
+    assert r.choices[0].message.content == "ok" and used == ["gemini-a", "gemini-b"] and llm._working["gemini"] == "gemini-b"
+    assert llm.healthy()

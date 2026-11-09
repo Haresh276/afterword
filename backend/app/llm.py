@@ -35,7 +35,7 @@ _working: dict[str, str] = {}
 # A judge is waiting on every call. If the model is slow or down, stop asking for a while and let the
 # offline paths answer instantly, instead of making every step wait out a timeout.
 COOLDOWN = float(os.getenv("LLM_COOLDOWN", "300"))
-_state = {"down_until": 0.0, "last_error": "", "last_ok": "", "last_ms": 0, "probed": False}
+_state = {"down_until": 0.0, "last_error": "", "last_ok": "", "last_ms": 0, "probed": False, "candidates": []}
 _state_lock = threading.Lock()
 
 
@@ -76,7 +76,8 @@ def _mark(ok: bool, model: str = "", err: Exception | None = None, ms: int = 0):
         if ok:
             _state.update(down_until=0.0, last_ok=model, last_ms=ms, last_error="")
         else:
-            _state.update(down_until=time.time() + COOLDOWN, last_error=f"{type(err).__name__}: {str(err)[:200]}")
+            wait = 60 if _status_code(err) == 429 else COOLDOWN
+            _state.update(down_until=time.time() + wait, last_error=f"{type(err).__name__}: {str(err)[:200]}")
 
 
 def _create(timeout: float | None = None, **kw):
@@ -90,9 +91,13 @@ def _create(timeout: float | None = None, **kw):
         try:
             r = _call(model, timeout, kw)
         except Exception as exc:  # noqa: BLE001
-            if _status_code(exc) not in (400, 413, 422):   # bad request = our input; anything else = model trouble
+            if _status_code(exc) in (400, 413, 422):         # bad request = our input, not model trouble
+                raise
+            r = _rotate(model, kw, exc) if base == GEMINI_URL and not os.getenv("LLM_MODEL") else None
+            if r is None:
                 _mark(False, err=exc)
-            raise
+                raise
+            return r
         _mark(True, model, ms=int((time.time() - t0) * 1000))
         return r
     if _state["probed"]:   # the startup probe found no usable model; the background re-probe will retry
@@ -112,6 +117,23 @@ def _create(timeout: float | None = None, **kw):
     raise last  # type: ignore[misc]
 
 
+def _rotate(failed: str, kw: dict, exc: Exception):
+    """The working model hit its quota (429), was overloaded or timed out: free-tier quotas are per model, so
+    try the other models the probe found before giving up. Returns a response, or None if none answered."""
+    for m in [c for c in _state.get("candidates", []) if c != failed]:
+        t0 = time.time()
+        try:
+            r = _call(m, 12.0, kw)
+        except Exception as e2:  # noqa: BLE001
+            if _status_code(e2) in (400, 413, 422):
+                return None
+            continue
+        _working["gemini"] = m
+        _mark(True, m, ms=int((time.time() - t0) * 1000))
+        return r
+    return None
+
+
 def probe() -> dict:
     """Try each candidate model once with a tiny prompt. Used at startup (so the first visitor never waits on
     a dead model) and by /api/llm/ping. Never returns the key."""
@@ -126,6 +148,7 @@ def probe() -> dict:
             from . import gemini_native
             listed = gemini_native.list_models(key)
             models = listed[:5] or models
+            _state["candidates"] = listed[:6]
             out.append({"model": "(list models)", "ok": True, "ms": 0, "reply": ", ".join(listed[:6])})
         except Exception as exc:  # noqa: BLE001
             out.append({"model": "(list models)", "ok": False, "ms": 0, "error": f"{type(exc).__name__}: {str(exc)[:120]}"})

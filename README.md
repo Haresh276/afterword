@@ -98,7 +98,7 @@ flowchart LR
 
 | Criterion | What to look at |
 |---|---|
-| **Technological implementation** | PayPal Agent Toolkit 1.11 plus REST through the toolkit's own authenticated client. One choke point for every money call that verifies the approval itself. A gateway-enforced objection window, payload-hash-bound atomic approvals, `PayPal-Request-Id` idempotency, and a hash-chained audit log. A Gemini agent with read-only PayPal tools. 37 tests, CI on Linux, Windows and macOS (Python 3.11–3.13), and a scripted real-sandbox run. |
+| **Technological implementation** | PayPal Agent Toolkit 1.11 plus REST through the toolkit's own authenticated client. One choke point for every money call that verifies the approval itself. A gateway-enforced objection window, payload-hash-bound atomic approvals, `PayPal-Request-Id` idempotency, and a hash-chained audit log. A Gemini agent with read-only PayPal tools. 38 tests, CI on Linux, Windows and macOS (Python 3.11–3.13), and a scripted real-sandbox run. |
 | **Design** | Six calm steps for a grieving family; a Bryntum timeline of the money; countdown and plain wording; letters in English, Spanish and more. A merchant console with AG Grid and AG Studio. |
 | **Potential impact** | Three million US deaths a year, each with its own set of subscriptions. The design covers both directions: families, and businesses (fewer chargebacks, no dunning emails to the dead, auto-close rules). |
 | **Innovation** | Reversible-first two-phase close with a proof-of-life veto. An AI reviewer that investigates on PayPal but structurally cannot move money. Signed notices, signed receipts and independent re-reads of PayPal. A fraud graph that a forger can't use to lock out the real family. A live red-team page. |
