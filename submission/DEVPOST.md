@@ -25,7 +25,7 @@ The first question we asked was the dangerous one: what stops someone reporting 
   - an **AG Grid** inbox with auto-close rules and human review;
   - an **AG Studio** network report whose AI agent runs on Gemini;
   - an MCP server, so a company's own billing or collections agents can verify notices and avoid chasing a dead customer for a failed payment.
-- **Try to break it.** Nine live attacks against the real code, from a forged certificate to prompt injection. All nine are blocked on the hosted demo.
+- **Try to break it.** Ten live attacks against the real code, from a forged certificate to talking the AI reviewer into approving a refund. All ten are blocked on the hosted demo.
 
 ## How we built it
 - **Backend.** FastAPI and SQLite.

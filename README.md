@@ -41,7 +41,7 @@ Built solo for the **PayPal AI Hackathon 2026** with the **PayPal Agent Toolkit*
 | 1:45 | **For businesses → The Daily Ledger** | Open the notice → read the **AI reviewer** → *Approve all* | Gemini's recommendation and every PayPal lookup it made; PayPal's subscriber record matched to the certificate; each step labelled reversible or irreversible |
 | 2:10 | **For businesses → Network insights** | Switch pages; press *Edit this report* | The **AG Studio** report across the network |
 | 2:25 | **For businesses → PayPal sandbox proof** | *Run live check* | Real sandbox calls made right now, plus the recorded full run on real sandbox subscriptions |
-| 2:40 | **Try to break it** | *Run every attack* | **9 of 9 blocked** (against the built-in PayPal copy) |
+| 2:40 | **Try to break it** | *Run every attack* | **10 of 10 blocked** (against the built-in PayPal copy), including talking the AI reviewer into approving |
 | Bonus | Step 4 again | *Start the demo again*, send, open the email link, press *I'm alive. Stop this.* | Every pause undone, no money moved, the reporter flagged |
 
 The shared demo runs on a built-in copy of the PayPal endpoints, and **every visitor gets their own demo world** (their own cases, inbox, merchant rules, audit view and simulated PayPal records). Every route checks it, so judges using the site at the same time can't see, approve, reset or block each other's runs. **PayPal sandbox proof** shows the same code on the real sandbox.
@@ -120,7 +120,7 @@ The AI reads documents, writes letters and investigates notices. **No language m
 | A forger can't lock out the real family | A reuse flag is critical only if the other case *passed*; a blocked forgery becomes a note on the genuine case |
 | Tamper-evident | An append-only, SHA-256 hash-chained audit log, with a *Verify the chain* button |
 
-<img src="docs/screenshots/8-try-to-break-it.jpg" width="49%" alt="Try to break it: 9 of 9 attacks blocked"> <img src="docs/screenshots/6-merchant-review.jpg" width="49%" alt="Merchant review: PayPal matches and reversible / irreversible steps">
+<img src="docs/screenshots/8-try-to-break-it.jpg" width="49%" alt="Try to break it: 10 of 10 attacks blocked"> <img src="docs/screenshots/6-merchant-review.jpg" width="49%" alt="Merchant review: PayPal matches and reversible / irreversible steps">
 
 ## PayPal
 
