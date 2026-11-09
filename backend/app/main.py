@@ -372,26 +372,28 @@ def timeline(cid: str, request: Request):
             kind = "invoice" if h.get("invoice") else "after" if h.get("after_death") else "before"
             events.append({"id": f"{rid}-h{i}", "resourceId": rid, "startDate": h["date"], "duration": 0, "kind": kind,
                            "name": f"${h['amount']:.2f}" + (" invoice, unpaid" if kind == "invoice" else " after the death" if kind == "after" else ""),
-                           "eventColor": {"before": "gray", "after": "red", "invoice": "orange"}[kind]})
+                           "eventColor": {"before": "#8b9593", "after": "#c0392b", "invoice": "#d4a72c"}[kind]})
         n = f.get("notice") or {}
         if n.get("received_at"):
             events.append({"id": f"{rid}-told", "resourceId": rid, "startDate": n["received_at"], "duration": 0, "kind": "told",
-                           "name": "Told by Afterword", "eventColor": "violet"})
+                           "name": "Told by Afterword", "eventColor": "#5a4e6e"})
         if n.get("closed_at"):
             refunded = f.get("refunded") or 0
             events.append({"id": f"{rid}-closed", "resourceId": rid, "startDate": n["closed_at"], "duration": 0, "kind": "closed",
-                           "name": "Closed" + (f", ${refunded:.2f} refunded" if refunded else ""), "eventColor": "green"})
+                           "name": "Closed" + (f", ${refunded:.2f} refunded" if refunded else ""), "eventColor": "#2f5d52"})
         if f["kind"] == "SUBSCRIPTION" and f.get("next_charge") and f.get("period_days"):
             stopped = f["status"] in ("CLOSED", "PAUSED")
             d, k = _date.fromisoformat(f["next_charge"]), 0
             while d <= today + _td(days=365) and k < 24:
                 events.append({"id": f"{rid}-n{k}", "resourceId": rid, "startDate": d.isoformat(), "duration": 0, "kind": "future",
                                "stopped": stopped, "name": f"${f['typical_amount']:.2f} " + ("won't be taken" if stopped else "will be taken"),
-                               "eventColor": "teal" if stopped else "amber"})
+                               "eventColor": "#9fd3c9" if stopped else "#d4a72c"})
                 d += _td(days=round(f["period_days"]))
                 k += 1
-    ranges = [{"id": "death", "name": "", "startDate": c["date_of_death"], "cls": "tr-death"},
-              {"id": "today", "name": "", "startDate": today.isoformat(), "cls": "tr-today"}]
+    ranges = [{"id": "death", "name": "", "startDate": c["date_of_death"], "cls": "tr-death", "timeRangeColor": "#973a3a",
+               "style": "border-left:2px solid #973a3a"},
+              {"id": "today", "name": "", "startDate": today.isoformat(), "cls": "tr-today", "timeRangeColor": "#8b9593",
+               "style": "border-left:2px dashed #8b9593"}]
     if c.get("objection_deadline") and c["status"] != "OBJECTED":
         start = min((f["notice"]["received_at"] for f in c["findings"] if (f.get("notice") or {}).get("received_at")), default=None)
         if start:
