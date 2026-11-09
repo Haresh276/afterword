@@ -26,6 +26,8 @@ Built solo for the **PayPal AI Hackathon 2026** with the **PayPal Agent Toolkit*
 > **Live demo:** https://afterword-6xki.onrender.com (Render free tier: the first visit can take about a minute to wake up). **2-minute video:** linked at the top of the Devpost page.
 > **Run it yourself:** `python scripts/install.py && python scripts/start_demo.py` (Python 3.11+, any OS, no keys, no Node).
 
+<img src="docs/demo.gif" width="100%" alt="One notice: billing paused at every company within seconds, then cancelled and refunded after the objection window, and the timeline turns green">
+
 <img src="docs/screenshots/5-timeline-after.jpg" width="49%" alt="Bryntum timeline: charges before the death, after it, closed, and a year of charges that won't be taken"> <img src="docs/screenshots/3-paused-window.jpg" width="49%" alt="Billing paused at every company while the objection window runs">
 
 ---
