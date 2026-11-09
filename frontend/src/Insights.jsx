@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AgStudioAiModule, createAiHarness, studioTheme } from 'ag-studio'
+import { AgStudioAiModule, AgStudioLicenseManager, createAiHarness, studioTheme } from 'ag-studio'
 import { AgStudio, AgStudioProvider, createWidgets } from 'ag-studio-react'
 import { receiptWidget } from './studio/ReceiptWidget'
 import { api } from './api'
 import { openaiAdapter } from './studio/openai-adapter'
+
+// AG Studio trial licence for the hackathon build (a client-side key by design). Set at build time:
+//   VITE_AG_STUDIO_LICENSE=... npm run build
+if (import.meta.env.VITE_AG_STUDIO_LICENSE) AgStudioLicenseManager.setLicenseKey(import.meta.env.VITE_AG_STUDIO_LICENSE)
 
 // For businesses -> Insights: one AG Studio report over the whole Afterword network.
 // Data comes from /api/insights: live rows from this hub plus a labelled, seeded 90-day simulation.
