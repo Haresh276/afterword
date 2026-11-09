@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import os
 import re
 import secrets
@@ -52,9 +53,12 @@ async def lifespan(_: FastAPI):
                 pass
 
     task = asyncio.create_task(ticker())
+    probe_stop = threading.Event()
+    threading.Thread(target=llm.keep_probing, args=(probe_stop,), daemon=True, name="llm-probe").start()
     async with mcp_server.server.session_manager.run():
         yield
     stop.set()
+    probe_stop.set()
     await task
 
 
@@ -83,7 +87,7 @@ def _404(what: str):
 
 @app.get("/api/status")
 def status():
-    return {"paypal_mode": pp.MODE, "paypal_keys": pp.HAS_KEYS, "llm": llm.model_name(), "llm_live": llm.available(),
+    return {"paypal_mode": pp.MODE, "paypal_keys": pp.HAS_KEYS, "llm": llm.model_name(), "llm_live": llm.available() and llm.healthy(),
             "letter_languages_offline": list(letters.OFFLINE),
             "min_score": merchant.MIN_SCORE, "protocol": notices.PROTOCOL,
             "objection_window_seconds": OBJECTION_SECONDS, "objection_window_text": _window_text(OBJECTION_SECONDS)}
@@ -573,6 +577,12 @@ def paypal_live_check():
 @app.get("/api/insights")
 def insights_rows():
     return insights.rows()
+
+
+@app.get("/api/llm/ping")
+async def llm_ping():
+    """Which model this server can reach right now, and how fast (never shows the key)."""
+    return await asyncio.to_thread(llm.probe)
 
 
 @app.post("/api/ai/responses")

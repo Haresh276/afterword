@@ -463,3 +463,34 @@ def test_live_model_cannot_break_the_demo(c, monkeypatch):
     # a model outage falls back cleanly
     monkeypatch.setattr(llm, "json_call_image", lambda *a, **k: (_ for _ in ()).throw(TimeoutError("slow")))
     assert _case(c)["status"] == "VERIFIED"
+
+
+def test_slow_model_trips_the_breaker_and_nobody_waits(c, monkeypatch):
+    """A hanging model is tried once; after that every AI step answers instantly from the offline path."""
+    import time as _t
+    from app import llm
+    calls = []
+
+    class Hang:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kw):
+                    calls.append(kw["model"])
+                    raise TimeoutError("Request timed out.")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(llm, "client", lambda timeout=None: Hang())
+    monkeypatch.setitem(llm._state, "down_until", 0.0)
+    monkeypatch.setitem(llm._state, "probed", False)
+    monkeypatch.setattr(llm, "_working", {})
+    r = llm.probe()
+    assert r["available"] and not r["healthy"] and len(r["tries"]) == len(llm.GEMINI_MODELS)
+    assert "test-key" not in str(r)                                  # the key is never echoed back
+    n = len(calls)
+    t0 = _t.time()
+    k = _case(c)                                                     # the whole family flow still works...
+    assert k["status"] == "VERIFIED" and "offline" in k["extraction"]["engine"]
+    assert len(calls) == n and _t.time() - t0 < 5                    # ...without touching the dead model again
+    assert c.get("/api/status").json()["llm_live"] is False
+    monkeypatch.setitem(llm._state, "down_until", 0.0)
+    monkeypatch.setitem(llm._state, "probed", False)

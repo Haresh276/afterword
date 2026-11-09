@@ -39,9 +39,10 @@ def extract(image: bytes, mime: str) -> tuple[dict, str]:
     so every judge gets the same result; the live model's own reading is kept alongside and compared."""
     digest = sha256(image)
     reading, err = None, ""
-    if llm.available():
-        try:
-            reading = llm.json_call_image(EXTRACT_SYSTEM, "Read this document.", image, mime)
+    if llm.available() and llm.healthy():
+        try:   # the demo documents' checks don't depend on this reading, so don't keep the visitor waiting long
+            reading = llm.json_call_image(EXTRACT_SYSTEM, "Read this document.", image, mime,
+                                          timeout=12.0 if digest in SPECIMENS else None)
         except Exception as exc:  # noqa: BLE001
             err = str(exc)[:160]
     if digest in SPECIMENS:
