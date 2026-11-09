@@ -234,3 +234,20 @@ table.mini th { font-weight: 600; color: var(--ink-2); background: var(--paper, 
 .tour li { margin: 2px 0; }
 .linkish { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; color: var(--dusk); text-decoration: underline; cursor: pointer; }
 @media (max-width: 720px) { .tour { margin: 10px 16px 0; } }
+
+/* AG Studio custom widget: closure receipt */
+.aw-receipt { height: 100%; display: flex; flex-direction: column; padding: 14px 16px 12px; background: #fffdf8;
+  background-image: radial-gradient(circle at 8px 0, transparent 5px, #fffdf8 5.5px); background-size: 16px 10px; background-repeat: repeat-x;
+  font-family: 'Public Sans', system-ui, sans-serif; color: #1d2626; box-sizing: border-box; }
+.aw-receipt-head { display: flex; align-items: baseline; gap: 8px; border-bottom: 1px dashed #b9c2bf; padding-bottom: 8px; margin-bottom: 6px; }
+.aw-receipt-title { flex: 1; font-family: Georgia, 'Times New Roman', serif; font-size: 16px; }
+.aw-receipt-cols { display: flex; gap: 14px; font-size: 11px; color: #55615f; text-transform: uppercase; letter-spacing: .04em; }
+.aw-receipt-lines { overflow: auto; }
+.aw-receipt-line { display: flex; align-items: baseline; gap: 8px; font-size: 13px; padding: 4px 0; }
+.aw-receipt-line .num { font-variant-numeric: tabular-nums; min-width: 64px; text-align: right; }
+.aw-receipt-line .muted { color: #55615f; }
+.aw-receipt-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
+.aw-receipt-dots { flex: 1; border-bottom: 1px dotted #c9d0cd; transform: translateY(-3px); min-width: 12px; }
+.aw-receipt-total { border-top: 1px dashed #b9c2bf; margin-top: 6px; padding-top: 8px; font-weight: 700; }
+.aw-receipt-stamp { margin-top: 10px; align-self: flex-start; font-size: 11px; color: #2f5d52; border: 1.5px solid #2f5d52; border-radius: 4px;
+  padding: 3px 8px; transform: rotate(-1.5deg); letter-spacing: .02em; }

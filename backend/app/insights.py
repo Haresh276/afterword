@@ -43,7 +43,7 @@ def _simulated(today: date) -> dict:
             after_death = rng.choices([0, 1, 2, 3], weights=[3, 5, 2, 1])[0] if kind != "invoice" else 0
             refund = round(after_death * amount, 2)
             human = (not auto) or refund > cap or rng.random() < 0.08
-            mins_to_pause = round(rng.uniform(0.4, 3.5) if not human else rng.uniform(4, 90), 1)
+            secs_to_pause = round(rng.uniform(2, 25), 1)   # every business pauses on arrival, even when a person reviews the rest
             hours = 72 + (rng.uniform(0.02, 0.2) if not human else rng.uniform(1, 30))
             closed_on = datetime.combine(d, datetime.min.time()) + timedelta(hours=hours)
             withdrawn = rng.random() < 0.012
@@ -51,7 +51,7 @@ def _simulated(today: date) -> dict:
                                                            ("Needs review" if human and rng.random() < 0.4 else "Paused, in window"))
             notices.append({"id": nid, "source": "Simulated", "merchant": name, "category": cat, "received": d.isoformat(),
                             "status": status, "closedBy": ("Person" if human else "Auto-close rule") if status == "Closed" else "Not closed yet",
-                            "minutesToPause": mins_to_pause if kind != "invoice" else None,
+                            "secondsToPause": secs_to_pause if kind != "invoice" else None,
                             "hoursToClose": round(hours, 1) if status == "Closed" else None,
                             "refunded": refund if status == "Closed" else 0.0,
                             "yearlyStopped": round(amount * (1 if kind == "annual" else 12 if kind == "sub" else 0), 2) if status == "Closed" else 0.0,
@@ -84,7 +84,7 @@ def _live() -> dict:
         acts = db.query("SELECT * FROM pending_actions WHERE notice_id=?", (n["id"],))
         pause = next((a for a in acts if a["tool"] == "suspend_subscription" and a["status"] == "EXECUTED"), None)
         t0 = datetime.fromisoformat(n["received_at"]) if n["received_at"] else None
-        mins = round((datetime.fromisoformat(pause["decided_at"]) - t0).total_seconds() / 60, 2) if pause and t0 and pause["decided_at"] else None
+        secs = round((datetime.fromisoformat(pause["decided_at"]) - t0).total_seconds(), 1) if pause and t0 and pause["decided_at"] else None
         hours = round((datetime.fromisoformat(n["closed_at"]) - t0).total_seconds() / 3600, 3) if n["closed_at"] and t0 else None
         by = sorted({a["decided_by"] or "" for a in acts if a["status"] == "EXECUTED"})
         out = n["outcome"] or {}
@@ -92,7 +92,7 @@ def _live() -> dict:
         notices.append({"id": n["id"], "source": "Live", "merchant": n["merchant"], "category": n["category"],
                         "received": (n["received_at"] or n["created_at"])[:10], "status": STATUS.get(n["status"], n["status"]),
                         "closedBy": ("Auto-close rule" if all(b.startswith("policy") for b in by) else "Person") if n["status"] == "CLOSED" else "Not closed yet",
-                        "minutesToPause": mins, "hoursToClose": hours, "refunded": out.get("refunded_total", 0.0) or 0.0,
+                        "secondsToPause": secs, "hoursToClose": hours, "refunded": out.get("refunded_total", 0.0) or 0.0,
                         "yearlyStopped": (f[0]["yearly_cost"] or 0.0) if f and n["status"] == "CLOSED" else 0.0, "notices": 1,
                         "relationship": n["relationship"] or "-", "language": {"en": "English", "hi": "Hindi", "ta": "Tamil", "te": "Telugu"}.get(n["language"] or "", "Other")})
         for a in acts:

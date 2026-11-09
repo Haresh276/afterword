@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AgStudioAiModule, createAiHarness, studioTheme } from 'ag-studio'
-import { AgStudio, AgStudioProvider } from 'ag-studio-react'
+import { AgStudio, AgStudioProvider, createWidgets } from 'ag-studio-react'
+import { receiptWidget } from './studio/ReceiptWidget'
 import { api } from './api'
 import { openaiAdapter } from './studio/openai-adapter'
 
@@ -33,7 +34,7 @@ function buildData(d) {
         fields: f([
           ['id', 'Notice ID', 'textFormat', true], ['source', 'Source', 'textFormat'], ['merchant', 'Business', 'textFormat'],
           ['category', 'Category', 'textFormat'], ['received', 'Received', 'dateFormat'], ['status', 'Notice status', 'textFormat'],
-          ['closedBy', 'Closed by', 'textFormat'], ['minutesToPause', 'Minutes until billing paused', 'decimalFormat'],
+          ['closedBy', 'Closed by', 'textFormat'], ['secondsToPause', 'Seconds until billing paused', 'decimalFormat'],
           ['hoursToClose', 'Hours to close', 'decimalFormat'], ['refunded', 'Refunded to family', 'currencyFormat'],
           ['yearlyStopped', 'Charges stopped per year', 'currencyFormat'], ['notices', 'Notices', 'integerFormat'],
           ['relationship', 'Reported by', 'textFormat'], ['language', 'Family language', 'textFormat'],
@@ -72,7 +73,7 @@ const network = {
   widgets: {
     source: { type: 'button-filter', dataMapping: { value: [{ id: 'notices.source' }] }, format: title('Source') },
     'k-notices': kpi('Notices', countd('notices.id'), 'calendar::week'),
-    'k-pause': kpi('Mins to pause', avg('notices.minutesToPause')),
+    'k-pause': kpi('Seconds to pause', avg('notices.secondsToPause')),
     'k-refunded': kpi('Refunded', sum('notices.refunded'), 'calendar::week'),
     'k-stopped': kpi('Stopped / year', sum('notices.yearlyStopped'), 'calendar::week'),
     weekly: { type: 'column-chart-stacked', dataMapping: { categoryKey: [{ id: 'calendar::week' }], valueKey: [sum('notices.notices')], legendKey: [{ id: 'notices.status' }] },
@@ -83,11 +84,13 @@ const network = {
       format: { ...title('Who closed it'), style: { custom: { pieDataLabel: { enabled: true }, totalLabel: { enabled: true } } } } },
     pivot: { type: 'pivot-grid', dataMapping: { rows: [{ id: 'notices.merchant' }], columns: [{ id: 'notices.status' }], values: [sum('notices.notices')] },
       format: { ...title('Notices by business and status'), style: { grandTotalRow: { enabled: true } } } },
+    receipt: { type: 'afterword-receipt', dataMapping: { label: [{ id: 'notices.merchant' }], amount: [sum('notices.refunded')], secondary: [sum('notices.yearlyStopped')] },
+      format: { heading: 'Closure receipt' } },
   },
   widgetLayout: {
     source: at(0, 0, 24, 7),
     'k-notices': at(0, 7, 6, 7), 'k-pause': at(6, 7, 6, 7), 'k-refunded': at(12, 7, 6, 7), 'k-stopped': at(18, 7, 6, 7),
-    weekly: at(0, 14, 16, 17), by: at(16, 14, 8, 17), close: at(0, 31, 12, 18), pivot: at(12, 31, 12, 18),
+    weekly: at(0, 14, 10, 17), by: at(10, 14, 6, 17), receipt: at(16, 14, 8, 26), close: at(0, 31, 8, 18), pivot: at(8, 31, 8, 18),
   },
 }
 
@@ -119,6 +122,12 @@ const safety = {
   },
   widgetLayout: { 'k-blocked': at(0, 0, 8, 7), who: at(0, 7, 8, 16), layers: at(8, 0, 16, 23), list: at(0, 23, 24, 20) },
 }
+
+// Studio's built-in widgets plus Afterword's own, in its own menu group so analysts can add it in edit mode.
+const widgets = (cfg) => createWidgets({
+  additionalTypes: [receiptWidget],
+  menu: [...cfg.menu, { label: 'Afterword', widgetIds: ['afterword-receipt'] }],
+})
 
 const PAGES = [['network', 'Network'], ['steps', 'PayPal steps'], ['safety', 'Safety']]
 const report = { selectedPageId: 'network', pages: [network, steps, safety], panels: { filters: { collapsed: true } } }
@@ -173,7 +182,7 @@ export default function Insights({ status }) {
       </div>
       <div className="studio-wrap">
         <AgStudioProvider modules={ai ? [AgStudioAiModule] : undefined}>
-          <AgStudio style={{ height: '100%', width: '100%' }} theme={theme} layout={{ widgetBorderEnabled: true }} data={data} ai={ai}
+          <AgStudio style={{ height: '100%', width: '100%' }} theme={theme} layout={{ widgetBorderEnabled: true }} data={data} ai={ai} widgets={widgets}
             initialState={report} mode={mode} onApiReady={(e) => { apiRef.current = e.api }} />
         </AgStudioProvider>
       </div>
