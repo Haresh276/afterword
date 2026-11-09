@@ -77,6 +77,15 @@ async def main():
         pg = await ctx.new_page()
         await pg.goto(U)
         await fresh(pg)
+        try:   # warm the lazy AG Studio bundle so its scene doesn't open on spinners
+            await pg.get_by_role("button", name="For businesses").click()
+            await pg.get_by_role("button", name="Network insights").click()
+            await pg.wait_for_selector(".studio-wrap canvas", timeout=30000)
+            await pg.wait_for_timeout(1500)
+            await pg.get_by_role("button", name="For families").click()
+            await pg.wait_for_timeout(500)
+        except Exception:
+            pass
         T0 = time.monotonic()
         async with Scene("hook"):
             await pg.mouse.move(700, 300, steps=10)
@@ -109,7 +118,12 @@ async def main():
             await pg.evaluate("scrollTo({top:0})")
             await tap(pg, pg.get_by_role("button", name="For businesses"), 1200)
             await tap(pg, pg.locator("nav.side button", has_text="The Daily Ledger"), 1200)
-            await tap(pg, pg.locator(".ag-row").first, 2200)
+            await tap(pg, pg.locator(".ag-row").first, 1200)
+            rv = pg.locator(".drawer .card", has_text="AI reviewer")
+            if await rv.count():
+                box = await rv.first.bounding_box()
+                await pg.mouse.move(box["x"] + box["width"] * 0.5, box["y"] + 30, steps=14)
+                await pg.wait_for_timeout(3200)
             await pg.locator(".drawer").evaluate("e => e.scrollTo({top: 700, behavior: 'smooth'})")
             await pg.wait_for_timeout(1500)
             await tap(pg, pg.get_by_role("button", name=re.compile("Approve all")), 1200)
@@ -121,7 +135,11 @@ async def main():
         async with Scene("insights"):
             await tap(pg, pg.get_by_role("button", name="Network insights"), 400)
             await pg.wait_for_selector(".studio-wrap canvas", timeout=20000)
-            await pg.wait_for_timeout(2500)
+            try:   # every widget drawn, none still "Loading..."
+                await pg.wait_for_function("() => { const w = document.querySelector('.studio-wrap'); return w && !/Loading/.test(w.innerText) && document.querySelector('.aw-receipt') }", timeout=25000)
+            except Exception:
+                pass
+            await pg.wait_for_timeout(1500)
         async with Scene("lab"):
             await tap(pg, pg.get_by_role("button", name="Try to break it"), 700)
             await tap(pg, pg.get_by_role("button", name="Run every attack"), 2500)
