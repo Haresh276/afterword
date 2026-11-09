@@ -151,11 +151,18 @@ def run(sid: str, ingest: Callable[[str, bytes, str], dict], session: str = "") 
         cap = _lab_capture(9.99)[1]
         a = _lab_action("refund_capture", {"capture_id": cap, "amount": "9.99", "currency": "USD", "note": "lab"}, amount=9.99)
         first = json.loads(pp.approve(a["id"], "reviewer")["result"])
-        again = pp.call("refund_capture", a["params"], actor="paypal_agent", ref="lab", approved_action=a["id"])
+        try:                                   # 1) replaying the same approval at the choke point
+            pp.call("refund_capture", a["params"], actor="paypal_agent", ref="lab", approved_action=a["id"])
+            gate = "the gateway let the replay through"
+            gate_ok = False
+        except PermissionError as exc:
+            gate, gate_ok = f"Gateway refused the replay: {exc}", True
+        # 2) even a retry that reaches PayPal (say, after a network timeout) carries the same request id
+        again = pp.transport().run("refund_capture", a["params"], request_id=f"afterword-{a['id']}")
         same = first.get("id") == again.get("id")
-        return _result(sid, same, "PayPal-Request-Id", [
-            f"First refund {first.get('id')} for $9.99", f"Retry with the same request id afterword-{a['id']}",
-            f"PayPal returned the same refund {again.get('id')}: nothing new moved"], t0)
+        return _result(sid, gate_ok and same, "Choke point + PayPal-Request-Id", [
+            f"First refund {first.get('id')} for $9.99", gate,
+            f"A network-level retry with request id afterword-{a['id']} returned the same refund {again.get('id')}: nothing new moved"], t0)
 
     if sid == "rewrite_audit":
         row = db.query("SELECT id, action FROM audit_log ORDER BY id DESC LIMIT 1")[0]

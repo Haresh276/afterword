@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS notices (
 CREATE TABLE IF NOT EXISTS pending_actions (
     id TEXT PRIMARY KEY, notice_id TEXT, merchant_id TEXT,
     tool TEXT, params TEXT, rationale TEXT, policy_checks TEXT,
-    status TEXT,              -- PENDING | APPROVED | EXECUTED | REJECTED | FAILED | EXPIRED
+    status TEXT,              -- PENDING | EXECUTING | EXECUTED | REJECTED | FAILED | EXPIRED
     proposed_by TEXT, decided_by TEXT, result TEXT,
     params_hash TEXT, expires_at TEXT, amount REAL,
     phase TEXT,               -- now (reversible) | after_window (irreversible)
@@ -231,6 +231,17 @@ def update(table: str, row_id: Any, values: dict) -> None:
     with _lock:
         conn().execute(f"UPDATE {table} SET {', '.join(f'{k} = ?' for k in enc)} WHERE id = ?", [*enc.values(), row_id])
         conn().commit()
+
+
+def claim(table: str, row_id: Any, expect_status: str, values: dict) -> bool:
+    """Compare-and-set on status: True only for the one caller that moved the row out of expect_status."""
+    enc = _encode(values)
+    with _lock:
+        cur = conn().raw.execute(f"UPDATE {table} SET {', '.join(f'{k} = ?' for k in enc)} WHERE id = ? AND status = ?",
+                                 [*enc.values(), row_id, expect_status])
+        n = cur.rowcount
+        conn().commit()
+    return n == 1
 
 
 def get(table: str, row_id: Any) -> dict | None:

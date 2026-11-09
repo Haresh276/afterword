@@ -123,11 +123,66 @@ def test_refund_idempotent_and_capped(c):
     t = pp.transport()
     sid = t.seed_subscription("x", "A", "B", "a@b.c", 10, "USD", "2026-01-01T00:00:00Z")
     cap = t.seed_capture(sid, "2026-01-02T00:00:00Z", 10, "USD")
-    a = pp.call("refund_capture", {"capture_id": cap, "amount": "10.00", "currency": "USD"}, actor="t", approved_action="act_1")
-    b = pp.call("refund_capture", {"capture_id": cap, "amount": "10.00", "currency": "USD"}, actor="t", approved_action="act_1")
-    assert a["id"] == b["id"]
+    params = {"capture_id": cap, "amount": "10.00", "currency": "USD"}
+    a = t.run("refund_capture", params, request_id="afterword-act_1")
+    b = t.run("refund_capture", params, request_id="afterword-act_1")
+    assert a["id"] == b["id"]                                    # same request id -> same refund
     with pytest.raises(RuntimeError):
-        pp.call("refund_capture", {"capture_id": cap, "amount": "10.00", "currency": "USD"}, actor="t", approved_action="act_2")
+        t.run("refund_capture", params, request_id="afterword-act_2")   # capped at the captured amount
+
+
+def test_choke_point_checks_the_approval_not_just_an_id(c):
+    t = pp.transport()
+    sid = t.seed_subscription("x", "A", "B", "a@b.c", 10, "USD", "2026-01-01T00:00:00Z")
+    cap = t.seed_capture(sid, "2026-01-02T00:00:00Z", 10, "USD")
+    params = {"capture_id": cap, "amount": "10.00", "currency": "USD"}
+    with pytest.raises(PermissionError, match="no such approved action"):
+        pp.call("refund_capture", params, actor="model", approved_action="act_madeup")
+    a = pp.propose(notice_id="n", merchant_id="m", tool="refund_capture", params=params, rationale="t",
+                   proposed_by="t", checks=[{"check": "ok", "passed": True}], amount=10)
+    with pytest.raises(PermissionError, match="PENDING"):          # proposed is not approved
+        pp.call("refund_capture", params, actor="model", approved_action=a["id"])
+    db.update("pending_actions", a["id"], {"status": "EXECUTING"})   # even mid-execution, the id only covers its own call
+    with pytest.raises(PermissionError, match="approves refund_capture"):
+        pp.call("cancel_subscription", {"subscription_id": sid, "reason": "x"}, actor="model", approved_action=a["id"])
+    with pytest.raises(PermissionError, match="payload differs"):
+        pp.call("refund_capture", {**params, "amount": "999.00"}, actor="model", approved_action=a["id"])
+    db.update("pending_actions", a["id"], {"status": "PENDING"})
+    done = pp.approve(a["id"], "reviewer")
+    assert done["status"] == "EXECUTED"
+    with pytest.raises(PermissionError, match="EXECUTED"):        # an executed approval can't be replayed
+        pp.call("refund_capture", params, actor="model", approved_action=a["id"])
+
+
+def test_concurrent_approvals_reach_paypal_once(c):
+    import threading
+    t = pp.transport()
+    sid = t.seed_subscription("x", "A", "B", "a@b.c", 10, "USD", "2026-01-01T00:00:00Z")
+    a = pp.propose(notice_id="n", merchant_id="m", tool="cancel_subscription", params={"subscription_id": sid, "reason": "x"},
+                   rationale="t", proposed_by="t", checks=[{"check": "ok", "passed": True}])
+    out = []
+
+    def go():
+        try:
+            out.append(pp.approve(a["id"], "r")["status"])
+        except ValueError as exc:
+            out.append(str(exc))
+    ths = [threading.Thread(target=go) for _ in range(6)]
+    [x.start() for x in ths]
+    [x.join() for x in ths]
+    assert out.count("EXECUTED") == 1 and db.get("pending_actions", a["id"])["status"] == "EXECUTED"
+    sent = db.query("SELECT COUNT(*) AS n FROM audit_log WHERE action='paypal.cancel_subscription' AND detail LIKE ?", (f'%{a["id"]}%',))
+    assert sent[0]["n"] == 1
+
+
+def test_long_production_window_still_closes(c):
+    """With the 72-hour production window, approvals must still be valid when the window ends."""
+    from datetime import datetime, timedelta, timezone
+    nb = (datetime.now(timezone.utc) + timedelta(hours=72)).isoformat(timespec="seconds")
+    a = pp.propose(notice_id="n", merchant_id="m", tool="cancel_subscription", params={"subscription_id": "I-x", "reason": "x"},
+                   rationale="t", proposed_by="t", checks=[], not_before=nb)
+    assert a["expires_at"] > nb                                   # the TTL starts when the window ends
+    assert datetime.fromisoformat(a["expires_at"]) - datetime.fromisoformat(nb) == timedelta(hours=pp.APPROVAL_TTL_HOURS)
 
 
 def test_identity_mismatch_blocks_auto_close(c):

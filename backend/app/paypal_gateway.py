@@ -22,7 +22,7 @@ import json
 import os
 import random
 import string
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from . import db
@@ -258,9 +258,11 @@ def transport():
 
 def call(method: str, params: dict, *, actor: str, ref: str | None = None, approved_action: str | None = None) -> dict:
     """Single choke point for every PayPal call. Money tools require an approved action id."""
-    if method in MONEY_TOOLS and not approved_action:
-        db.audit(actor, f"BLOCKED {method}", ref, {"reason": "money-moving call without approval"})
-        raise PermissionError(f"{method} requires an approved action")
+    if method in MONEY_TOOLS:
+        why = _approval_problem(method, params, approved_action)
+        if why:
+            db.audit(actor, f"BLOCKED {method}", ref, {"reason": why, "action_id": approved_action})
+            raise PermissionError(f"{method} refused: {why}")
     request_id = f"afterword-{approved_action}" if approved_action else None
     try:
         result = transport().run(method, params, request_id=request_id)
@@ -277,14 +279,41 @@ def params_hash(params: dict) -> str:
     return hashlib.sha256(json.dumps(params, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _approval_problem(method: str, params: dict, action_id: str | None) -> str | None:
+    """The choke point checks the approval itself, not just that an id was passed: the action must exist,
+    be the one approve() is executing right now, be for this exact tool, and carry this exact payload."""
+    if not action_id:
+        return "money-moving call without an approved action"
+    a = db.get("pending_actions", action_id)
+    if not a:
+        return "no such approved action"
+    if a["status"] != "EXECUTING":
+        return f"action is {a['status']}, not approved and executing"
+    if a["tool"] != method:
+        return f"action approves {a['tool']}, not {method}"
+    if a.get("params_hash") != params_hash(params) or params_hash(a["params"]) != a.get("params_hash"):
+        return "payload differs from the one that was approved"
+    if a.get("not_before") and a["not_before"] > db.now():
+        return "objection window still open"
+    return None
+
+
+def _expiry(not_before: str | None) -> str:
+    """Approvals stay valid for APPROVAL_TTL_HOURS after they first become runnable (not after proposal),
+    so a 72-hour objection window still leaves a full day to run the irreversible step."""
+    if not not_before:
+        return db.later(hours=APPROVAL_TTL_HOURS)
+    start = datetime.fromisoformat(not_before.replace("Z", "+00:00"))
+    return (start + timedelta(hours=APPROVAL_TTL_HOURS)).isoformat(timespec="seconds")
+
+
 def propose(*, notice_id: str, merchant_id: str, tool: str, params: dict, rationale: str, proposed_by: str,
             checks: list[dict], amount: float = 0.0, not_before: str | None = None) -> dict:
     phase = "now" if tool in REVERSIBLE or not not_before else "after_window"
-    ttl = db.later(hours=APPROVAL_TTL_HOURS)
     action = {"id": db.new_id("act"), "notice_id": notice_id, "merchant_id": merchant_id, "tool": tool,
               "params": params, "rationale": rationale, "policy_checks": checks, "status": "PENDING",
               "proposed_by": proposed_by, "created_at": db.now(), "params_hash": params_hash(params),
-              "expires_at": max(ttl, not_before or ""), "amount": amount, "phase": phase,
+              "expires_at": _expiry(not_before if phase == "after_window" else None), "amount": amount, "phase": phase,
               "not_before": not_before if phase == "after_window" else None}
     db.insert("pending_actions", action)
     db.audit(proposed_by, f"PROPOSED {tool}", notice_id, {"action_id": action["id"], "rationale": rationale,
@@ -294,9 +323,9 @@ def propose(*, notice_id: str, merchant_id: str, tool: str, params: dict, ration
 
 def reject(action_id: str, who: str, reason: str = "") -> dict:
     a = db.get("pending_actions", action_id)
-    if not a or a["status"] != "PENDING":
+    if not a or not db.claim("pending_actions", action_id, "PENDING",
+                             {"status": "REJECTED", "decided_by": who, "decided_at": db.now(), "result": reason}):
         raise ValueError("action is not pending")
-    db.update("pending_actions", action_id, {"status": "REJECTED", "decided_by": who, "decided_at": db.now(), "result": reason})
     db.audit(who, f"REJECTED {a['tool']}", a["notice_id"], {"action_id": action_id, "reason": reason})
     return db.get("pending_actions", action_id)
 
@@ -325,7 +354,10 @@ def approve(action_id: str, who: str) -> dict:
     if failed:
         db.audit("system", f"BLOCKED {a['tool']}", a["notice_id"], {"action_id": action_id, "failed_checks": failed})
         raise PermissionError("Checks failed: " + "; ".join(c["check"] for c in failed))
-    db.update("pending_actions", action_id, {"status": "APPROVED", "decided_by": who, "decided_at": db.now()})
+    # Atomic claim: if two reviewers (or the reviewer and the autopilot) approve at once, exactly one
+    # reaches PayPal; the other gets "not pending" and nothing is sent twice.
+    if not db.claim("pending_actions", action_id, "PENDING", {"status": "EXECUTING", "decided_by": who, "decided_at": db.now()}):
+        raise ValueError("action is not pending")
     db.audit(who, f"APPROVED {a['tool']}", a["notice_id"], {"action_id": action_id})
     try:
         result = call(a["tool"], a["params"], actor="paypal_agent", ref=a["notice_id"], approved_action=action_id)
