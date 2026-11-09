@@ -12,6 +12,40 @@ const theme = themeQuartz.withParams({
   wrapperBorderRadius: 8, spacing: 7, fontSize: 14, headerFontWeight: 600,
 })
 const STATUS = { SENT: 'Arriving', RECEIVED: 'Received', IN_REVIEW: 'Needs review', ACTIONED: 'Partly done', PAUSED: 'Paused · waiting', CLOSED: 'Closed', REJECTED: 'Rejected', WITHDRAWN: 'Withdrawn' }
+const VERDICT = { approve: ['CLOSED', 'Recommends approving'], needs_person: ['IN_REVIEW', 'Wants a person to look'], reject: ['REJECTED', 'Recommends rejecting'] }
+const LOOKUP = { read_notice: 'Read the signed notice', paypal_subscription: 'PayPal subscription', paypal_transactions: 'PayPal transactions', paypal_invoice: 'PayPal invoice', earlier_reports: 'Earlier reports' }
+
+function Reviewer({ n, id, notify, load }) {
+  const [busy, setBusy] = useState(false)
+  const r = n.review?.ai_review
+  const ask = async () => { setBusy(true); try { await api.post(`/api/merchant/notices/${id}/ai-review`); await load() } catch (e) { notify(e.message, true) } finally { setBusy(false) } }
+  const [cls, label] = VERDICT[r?.decision] || []
+  return (
+    <div className="card" style={{ marginTop: 14 }}>
+      <div className="row"><h3 className="grow">AI reviewer</h3>{r && <span className={`pill ${cls}`}>{label}</span>}</div>
+      {busy ? <p className="small muted" role="status" style={{ margin: '8px 0 0' }}>Investigating: reading the notice and checking PayPal…</p>
+        : r ? (
+          <>
+            <p className="small" style={{ margin: '8px 0 6px' }}>{r.summary}</p>
+            {r.concerns?.length > 0 && <ul className="small" style={{ margin: '0 0 6px', paddingLeft: 18 }}>{r.concerns.map((c, i) => <li key={i}>{c}</li>)}</ul>}
+            {r.trace?.length > 0 && (
+              <details className="fx"><summary className="tiny">What it looked up ({r.trace.length})</summary>
+                <ul className="checks" style={{ marginTop: 6 }}>{r.trace.map((t, i) => (
+                  <li key={i}><span className={t.result.includes('refused') ? 'no' : 'ok'}>{t.result.includes('refused') ? '✕' : '✓'}</span>
+                    <span>{LOOKUP[t.tool] || t.tool}{t.args?.subscription_id ? ` ${t.args.subscription_id}` : t.args?.invoice_id ? ` ${t.args.invoice_id}` : ''}</span>
+                    <span className="d">{t.result.slice(0, 140)}</span></li>))}</ul>
+              </details>
+            )}
+          </>
+        ) : <p className="small muted" style={{ margin: '8px 0 0' }}>A Gemini agent can investigate this notice on PayPal before you decide.</p>}
+      <div className="row" style={{ marginTop: 8 }}>
+        <button className="btn quiet sm" disabled={busy} onClick={ask}>{r ? 'Ask again' : 'Ask the AI reviewer'}</button>
+        <span className="tiny faint grow">{r ? `${r.engine}${r.seconds ? ` · ${r.seconds}s` : ''} · ` : ''}Read-only: it has no tool that can move money. A person approves.</span>
+      </div>
+    </div>
+  )
+}
+
 const TOOL = { suspend_subscription: 'Pause billing now', activate_subscription: 'Resume billing', cancel_subscription: 'Cancel subscription', refund_capture: 'Refund a charge', cancel_sent_invoice: 'Cancel open invoice' }
 
 function Notice({ id, onClose, notify, reload }) {
@@ -45,6 +79,8 @@ function Notice({ id, onClose, notify, reload }) {
             <li><span className={p.verification.score >= 0.8 ? 'ok' : 'no'}>{p.verification.score >= 0.8 ? '✓' : '✕'}</span><span>Certificate verified: {pct(p.verification.score)} of checks</span><span className="d">{p.verification.registration_number} · {p.verification.issuing_authority} · sha256 {p.verification.certificate_sha256.slice(0, 12)}…</span></li>
           </ul>
         </div>
+
+        <Reviewer n={n} id={id} notify={notify} load={load} />
 
         {p.objection_window?.irreversible_not_before && (
           <p className="tiny faint" style={{ margin: '0 0 12px' }}>Cancellations and refunds can't run before {new Date(p.objection_window.irreversible_not_before).toLocaleString()}. The account holder's own address {p.objection_window.subject_notified ? 'was' : 'could not be'} told, in case this is a mistake. {p.money_flow}</p>

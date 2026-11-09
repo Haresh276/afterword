@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import activity, certificate, closure, db, forensics, insights, lab, letters, llm, merchant, notices, paypal_proof, seed, studio_ai
+from . import reviewer, activity, certificate, closure, db, forensics, insights, lab, letters, llm, merchant, notices, paypal_proof, seed, studio_ai
 from . import paypal_gateway as pp
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -559,6 +559,13 @@ def merchant_notice(nid: str, request: Request):
 
 class Decision(BaseModel):
     reason: str = ""
+
+
+@app.post("/api/merchant/notices/{nid}/ai-review")
+async def ai_review(nid: str, request: Request):
+    """Ask the Gemini reviewer to investigate this notice (read-only; it can't move money)."""
+    _own_notice(nid, request)
+    return await asyncio.to_thread(reviewer.review, nid)
 
 
 @app.post("/api/merchant/notices/{nid}/approve-all")

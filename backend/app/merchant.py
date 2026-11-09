@@ -70,6 +70,13 @@ def receive(notice_id: str, background: bool = True) -> dict:
     if not sig_ok:
         db.audit(f"merchant:{m['name']}", "REJECTED notice: bad signature", notice_id)
         return db.get("notices", notice_id)
+    if not (m["auto_close"] and review["auto_eligible"]):
+        _pause_now(notice_id, m)
+        # A person will review this one: have the AI reviewer investigate first, so its findings are waiting.
+        if os.getenv("AFTERWORD_AI_REVIEW", "1") == "1":
+            from . import reviewer
+            (threading.Thread(target=reviewer.review, args=(notice_id,), daemon=True).start() if background
+             else reviewer.review(notice_id))
     if m["auto_close"] and review["auto_eligible"]:
         if background:
             threading.Thread(target=_autopilot, args=(notice_id,), daemon=True).start()
@@ -212,6 +219,17 @@ def _autopilot(notice_id: str, delay: bool = True, who: str | None = None) -> No
         finalize(notice_id)
     finally:
         lk.release()
+
+
+def _pause_now(notice_id: str, m: dict) -> None:
+    """Every business pauses billing as soon as a verified notice arrives, even when a person reviews the
+    rest: pausing is reversible (resumed at once if the account holder objects) and stops the next charge."""
+    for a in db.query("SELECT * FROM pending_actions WHERE notice_id=? AND status='PENDING' AND tool='suspend_subscription'", (notice_id,)):
+        if all(c["passed"] for c in a["policy_checks"]):
+            try:
+                pp.approve(a["id"], f"policy:{m['name']} pauses billing on every verified notice")
+            except Exception as exc:  # noqa: BLE001
+                db.audit("system", "pause failed", notice_id, {"action": a["id"], "error": str(exc)[:200]})
 
 
 def _mark_waiting(notice_id: str) -> None:

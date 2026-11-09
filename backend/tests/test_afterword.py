@@ -65,7 +65,9 @@ def test_full_flow_auto_and_manual(c):
     assert st["The Daily Ledger"] == "RECEIVED" or st["The Daily Ledger"] == "NOTIFIED" or st["The Daily Ledger"] != "CLOSED"
     # the manual merchant reviews and approves
     inbox = c.get("/api/merchant/notices", params={"merchant_id": "m_dailyledger"}).json()
-    assert inbox and inbox[0]["pending"] == 3  # pause + cancel + 1 refund
+    assert inbox and inbox[0]["pending"] == 2  # cancel + 1 refund; the reversible pause already ran
+    dl = {f["merchant_name"]: f for f in c.get(f"/api/cases/{cid}").json()["findings"]}["The Daily Ledger"]
+    assert dl["notice"]["paused"]                                   # billing is paused even while a person reviews
     c.post(f"/api/merchant/notices/{inbox[0]['id']}/approve-all")
     k = c.get(f"/api/cases/{cid}").json()
     assert k["status"] == "CLOSED"
@@ -627,3 +629,42 @@ def test_a_late_notice_gets_its_own_objection_window(c, monkeypatch):
     assert db.get("cases", cid)["objection_deadline"] > db.now()                      # a fresh one opened
     nb = [a["not_before"] for a in db.query("SELECT not_before FROM pending_actions WHERE not_before IS NOT NULL")]
     assert nb and all(x > db.now() for x in nb)                                     # nothing irreversible can run yet
+
+
+def test_ai_reviewer_investigates_but_cannot_move_money(c, monkeypatch):
+    """A scripted 'model' walks the reviewer's tools, tries to step outside them, then recommends."""
+    from app import llm, reviewer, gemini_native as g
+    k = _case(c)
+    c.post(f"/api/cases/{k['id']}/activity", data={"use_sample": "1"})
+    k = c.post(f"/api/cases/{k['id']}/notify").json()
+    f = next(f for f in k["findings"] if f["merchant_name"] == "StreamBox")
+    nid, sid = f["notice_id"], f["references_json"]["subscription_ids"][0]
+    off = c.post(f"/api/merchant/notices/{nid}/ai-review").json()          # no key in tests: honest offline summary
+    assert off["engine"].startswith("offline") and off["decision"] in ("approve", "needs_person")
+
+    def call(name, **args):
+        return g._Obj(id=f"c_{name}", type="function", function=g._Obj(name=name, arguments=__import__("json").dumps(args)))
+    script = [[call("read_notice")], [call("paypal_subscription", subscription_id=sid), call("paypal_transactions", subscription_id=sid)],
+              [call("paypal_subscription", subscription_id="I-SOMEONE-ELSE")],        # not named in the notice
+              [call("submit_recommendation", decision="approve", summary="Matches PayPal.", concerns=[])]]
+    seen = []
+
+    def fake_create(timeout=None, **kw):
+        seen.append(kw)
+        calls = script[len(seen) - 1]
+        return g._Obj(choices=[g._Obj(message=g._Obj(role="assistant", content=None, tool_calls=calls))], usage=None)
+    monkeypatch.setattr(llm, "available", lambda: True)
+    monkeypatch.setattr(llm, "healthy", lambda: True)
+    monkeypatch.setattr(llm, "_create", fake_create)
+    before = db.query("SELECT COUNT(*) AS n FROM audit_log WHERE actor='ai_reviewer' AND action LIKE 'paypal.%'")[0]["n"]
+    out = c.post(f"/api/merchant/notices/{nid}/ai-review").json()
+    assert out["decision"] == "approve" and [t["tool"] for t in out["trace"]] == [
+        "read_notice", "paypal_subscription", "paypal_transactions", "paypal_subscription"]
+    assert "not named in this notice" in out["trace"][3]["result"]             # can't browse other customers
+    names = {t["function"]["name"] for t in seen[0]["tools"]}
+    assert not names & pp.MONEY_TOOLS                                          # it is never offered a money tool
+    paypal = db.query("SELECT action FROM audit_log WHERE actor='ai_reviewer' AND action LIKE 'paypal.%'")
+    assert len(paypal) - before == 2 and all(r["action"] in ("paypal.show_subscription_details", "paypal.list_subscription_transactions") for r in paypal)
+    assert db.get("notices", nid)["review"]["ai_review"]["decision"] == "approve"
+    assert not db.query("SELECT 1 FROM audit_log WHERE actor='ai_reviewer' AND (action LIKE 'APPROVED%' OR action LIKE 'paypal.refund%' "
+                        "OR action LIKE 'paypal.cancel%' OR action LIKE 'paypal.suspend%')")   # it approved and moved nothing
