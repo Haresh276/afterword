@@ -162,7 +162,7 @@ def _run(n: dict) -> dict:
     trace, t0 = [], time.time()
     for step in range(MAX_STEPS):
         last = step == MAX_STEPS - 1
-        r = llm._create(timeout=20.0, messages=msgs, tools=TOOLS, temperature=0,
+        r = llm._create(timeout=10.0, messages=msgs, tools=TOOLS, temperature=0,
                         tool_choice={"type": "function", "function": {"name": "submit_recommendation"}} if last else "auto")
         msg = r.choices[0].message.model_dump()
         calls = msg.get("tool_calls") or []

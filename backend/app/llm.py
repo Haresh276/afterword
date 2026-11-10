@@ -123,7 +123,7 @@ def _rotate(failed: str, kw: dict, exc: Exception):
     for m in [c for c in _state.get("candidates", []) if c != failed]:
         t0 = time.time()
         try:
-            r = _call(m, 12.0, kw)
+            r = _call(m, 8.0, kw)
         except Exception as e2:  # noqa: BLE001
             if _status_code(e2) in (400, 413, 422):
                 return None

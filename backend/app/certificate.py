@@ -6,6 +6,8 @@ can be recognised if it is reused for someone else.
 """
 from __future__ import annotations
 
+import time
+import threading
 import hashlib
 import re
 from datetime import date
@@ -34,24 +36,47 @@ def sha256(b: bytes) -> str:
 DEATH_WORDS = ("death", "defunci", "décès", "deces", "óbito", "obito", "sterbe", "मृत्यु", "இறப்பு", "మరణ", "死亡")
 
 
+_READ: dict = {}   # sha256 -> (time, model reading) for the bundled demo documents
+
+
 def extract(image: bytes, mime: str) -> tuple[dict, str]:
     """Read the document. For the bundled demo documents the checks always run on their known fields,
     so every judge gets the same result; the live model's own reading is kept alongside and compared."""
     digest = sha256(image)
-    reading, err = None, ""
+    reading, err, cached = None, "", False
     if llm.available() and llm.healthy():
-        try:   # the demo documents' checks don't depend on this reading, so don't keep the visitor waiting long
-            reading = llm.json_call_image(EXTRACT_SYSTEM, "Read this document.", image, mime,
-                                          timeout=12.0 if digest in SPECIMENS else None)
-        except Exception as exc:  # noqa: BLE001
-            err = str(exc)[:160]
+        if digest in SPECIMENS:
+            # The demo documents' checks don't depend on the model, so a visitor never waits long for it: reuse
+            # a reading of this exact image from the last hour, else give the model 7 seconds and move on
+            # (a slow reading still lands in the cache for the next visitor).
+            hit = _READ.get(digest)
+            if hit and time.time() - hit[0] < 3600:
+                reading, cached = hit[1], True
+            else:
+                box: dict = {}
+
+                def work():
+                    try:
+                        box["r"] = llm.json_call_image(EXTRACT_SYSTEM, "Read this document.", image, mime, timeout=12.0)
+                        _READ[digest] = (time.time(), box["r"])
+                    except Exception as exc:  # noqa: BLE001
+                        box["e"] = str(exc)[:160]
+                th = threading.Thread(target=work, daemon=True)
+                th.start()
+                th.join(7.0)
+                reading, err = box.get("r"), box.get("e", "" if "r" in box else "still reading after 7 s")
+        else:
+            try:
+                reading = llm.json_call_image(EXTRACT_SYSTEM, "Read this document.", image, mime)
+            except Exception as exc:  # noqa: BLE001
+                err = str(exc)[:160]
     if digest in SPECIMENS:
         known = dict(SPECIMENS[digest])
         if reading:
             agree = names_match(reading.get("full_name", ""), known["full_name"]) and \
                 (reading.get("date_of_death") or "")[:10] == known["date_of_death"]
             known["model_reading"] = {k: reading.get(k) for k in ("full_name", "date_of_birth", "date_of_death", "registration_number", "language")}
-            return known, f"{llm.model_name()} read it ({'matches' if agree else 'differs from'} the demo record)"
+            return known, f"{llm.model_name()} read it ({'matches' if agree else 'differs from'} the demo record{', reading reused from the last hour' if cached else ''})"
         return known, "offline (known demo document)" + (f"; model unavailable: {err}" if err else "")
     if reading:
         t = (reading.get("document_type") or "").lower()
