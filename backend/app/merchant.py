@@ -14,6 +14,7 @@ import json
 import os
 import random
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import time
 from datetime import date, datetime, timedelta, timezone
 
@@ -269,6 +270,7 @@ def tick() -> int:
                        WHERE a.status='PENDING' AND a.not_before IS NOT NULL AND a.not_before<=?
                          AND n.status NOT IN ('WITHDRAWN','CLOSED','REJECTED')
 """, (now,))
+    due = []
     for r in rows:
         n = db.get("notices", r["notice_id"])
         m = merchant_for(n)
@@ -277,9 +279,13 @@ def tick() -> int:
                 continue
         if (db.get("cases", n["case_id"]) or {}).get("objected_at"):
             continue
-        _autopilot(n["id"], delay=False)
-        ran += 1
-    return ran
+        due.append(n["id"])
+    if len(due) == 1:
+        _autopilot(due[0], delay=False)
+    elif due:   # each business closes independently (its own lock), so a family isn't kept waiting in a queue
+        with ThreadPoolExecutor(max_workers=min(8, len(due))) as pool:
+            list(pool.map(lambda nid: _autopilot(nid, delay=False), due))
+    return ran + len(due)
 
 
 def approve_all(notice_id: str, who: str = "human") -> dict:

@@ -43,7 +43,7 @@ def merchant_reply(merchant: dict, notice: dict, outcome: dict) -> str:
              f"across {len(outcome['refunded'])} charges taken after {body['deceased']['date_of_death']}. "
              f"Open invoices cancelled: {len(outcome['invoices_cancelled'])}. "
              f"Marketing and billing emails to the deceased: stopped.")
-    if llm.available():
+    if llm.available() and llm.healthy():
         try:
             return llm.text_call(STYLE + f" Language: {LANGS.get(body['claimant'].get('language', 'en'), 'English')}.", facts)
         except Exception:  # noqa: BLE001
