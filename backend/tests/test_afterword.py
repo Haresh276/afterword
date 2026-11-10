@@ -444,18 +444,31 @@ def test_live_paypal_check_shape(c, monkeypatch):
                 @staticmethod
                 def get_access_token():
                     return "tok"
+        inv = {"status": "DRAFT"}
+        calls = []
         def run(self, method, params, request_id=None):
+            self.calls.append((method, request_id))
+            if method == "send_invoice":
+                self.inv["status"] = "SENT"
+            if method == "cancel_sent_invoice":
+                self.inv["status"] = "CANCELLED"
             return {"create_product": {"id": "PROD-1", "name": params.get("name")}, "create_subscription_plan": {"id": "P-1", "status": "ACTIVE"},
                     "create_subscription": {"id": "I-1", "status": "APPROVAL_PENDING"},
                     "show_subscription_details": {"id": "I-1", "status": "APPROVAL_PENDING",
-                                                  "subscriber": {"name": {"given_name": "Eleanor", "surname": "Hayes"}}}}[method]
+                                                  "subscriber": {"name": {"given_name": "Eleanor", "surname": "Hayes"}}},
+                    "create_invoice_draft": {"id": "INV2-1"}, "send_invoice": {}, "cancel_sent_invoice": {},
+                    "get_invoice": {"id": "INV2-1", "status": self.inv["status"]}}[method]
         def _rest(self, method, uri, payload=None, request_id=None):
             return {"_paypal_debug_id": "f00"}
     monkeypatch.setattr(pp, "HAS_KEYS", True)
     monkeypatch.setattr(pp, "live", lambda: Fake())
     paypal_proof._last.update(at=0, result=None)
     r = c.post("/api/paypal/live-check").json()
-    assert r["ok"] and len(r["steps"]) == 6 and r["steps"][3]["id"] == "I-1"
+    assert r["ok"] and len(r["steps"]) == 12 and r["steps"][3]["id"] == "I-1"
+    assert "refused" in r["steps"][9]["detail"] and r["steps"][11]["detail"] == "status CANCELLED"
+    cancels = [x for x in Fake.calls if x[0] == "cancel_sent_invoice"]
+    assert len(cancels) == 1 and cancels[0][1].startswith("afterword-act_")      # only the approved one reached "PayPal"
+    assert not db.query("SELECT 1 FROM pending_actions WHERE notice_id='live'")
     assert c.get("/api/paypal/evidence").json()["recorded"] in (True, False)
 
 

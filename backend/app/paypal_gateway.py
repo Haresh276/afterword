@@ -263,8 +263,9 @@ def transport():
     return _transport
 
 
-def call(method: str, params: dict, *, actor: str, ref: str | None = None, approved_action: str | None = None) -> dict:
-    """Single choke point for every PayPal call. Money tools require an approved action id."""
+def call(method: str, params: dict, *, actor: str, ref: str | None = None, approved_action: str | None = None, on=None) -> dict:
+    """Single choke point for every PayPal call. Money tools require an approved action id.
+    `on` picks the PayPal client (default: this server's mode); the approval rules are the same either way."""
     if method in MONEY_TOOLS:
         why = _approval_problem(method, params, approved_action)
         if why:
@@ -272,11 +273,11 @@ def call(method: str, params: dict, *, actor: str, ref: str | None = None, appro
             raise PermissionError(f"{method} refused: {why}")
     request_id = f"afterword-{approved_action}" if approved_action else None
     try:
-        result = transport().run(method, params, request_id=request_id)
+        result = (on or transport()).run(method, params, request_id=request_id)
     except Exception as exc:  # noqa: BLE001
         db.audit(actor, f"paypal.{method} FAILED", ref, {"mode": MODE, "params": params, "error": str(exc)})
         raise
-    db.audit(actor, f"paypal.{method}", ref, {"mode": MODE, "params": params, "result": result,
+    db.audit(actor, f"paypal.{method}", ref, {"mode": "sandbox" if isinstance(on, _Toolkit) else MODE, "params": params, "result": result,
                                               "action_id": approved_action, "paypal_request_id": request_id})
     return result
 
@@ -366,7 +367,7 @@ class WindowOpen(PermissionError):
         super().__init__(f"Irreversible: waits until {until} in case the account holder objects.")
 
 
-def approve(action_id: str, who: str) -> dict:
+def approve(action_id: str, who: str, on=None) -> dict:
     a = db.get("pending_actions", action_id)
     if not a or a["status"] != "PENDING":
         raise ValueError("action is not pending")
@@ -389,7 +390,7 @@ def approve(action_id: str, who: str) -> dict:
         raise ValueError("action is not pending")
     db.audit(who, f"APPROVED {a['tool']}", a["notice_id"], {"action_id": action_id})
     try:
-        result = call(a["tool"], a["params"], actor="paypal_agent", ref=a["notice_id"], approved_action=action_id)
+        result = call(a["tool"], a["params"], actor="paypal_agent", ref=a["notice_id"], approved_action=action_id, on=on)
     except Exception as exc:  # noqa: BLE001
         db.update("pending_actions", action_id, {"status": "FAILED", "result": str(exc)[:1000], "attempts": (a.get("attempts") or 0) + 1})
         raise

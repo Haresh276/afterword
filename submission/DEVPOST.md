@@ -83,7 +83,8 @@ python, fastapi, sqlite, paypal-agent-toolkit, paypal-rest-api, paypal-subscript
 
 ## Testing instructions (paste into the "testing instructions" or description field)
 - **Hosted demo.** Open the link; the first load can take about a minute on Render's free tier. No login needed.
-- **Path.** *For families → Fill in the demo family → Use the demo specimen → Use the demo export → Tell 7 companies*. Then *For businesses → The Daily Ledger* (open the notice: the AI reviewer's findings), *Network insights* and *PayPal sandbox proof*, then *Try to break it*.
+- **Fastest.** Open the live demo and press **Run the 60-second demo for me**.
+- **Path by hand.** *For families → Fill in the demo family → Use the demo specimen → Use the demo export → Tell 7 companies*. Then *For businesses → The Daily Ledger* (open the notice: the AI reviewer's findings), *Network insights* and *PayPal sandbox proof*, then *Try to break it*.
 - **Run locally.** `python scripts/install.py && python scripts/start_demo.py` (Python 3.11+, no keys).
 
 All people, companies and documents in the demo are fictional.

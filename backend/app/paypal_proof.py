@@ -66,9 +66,41 @@ def live_check() -> dict:
                              f"{((o.get('subscriber') or {}).get('name') or {}).get('given_name', '')} {((o.get('subscriber') or {}).get('name') or {}).get('surname', '')}"})
             _step(steps, "REST: deactivate the plan again (clean up)", lambda: t._rest("POST", f"/v1/billing/plans/{plan['id']}/deactivate"),
                   lambda o: {"id": plan["id"], "detail": "plan inactive"})
-            ok = True
+            # A real PayPal object changed through the approval gateway: send an invoice, show that cancelling it
+            # without an approved action is refused, then cancel it with one, and read PayPal back.
+            draft = _step(steps, "REST: create a real $25 invoice for Eleanor Hayes", lambda: t.run("create_invoice_draft", {
+                "detail": {"currency_code": "USD", "note": f"Afterword live check {stamp}"},
+                "invoicer": {"business_name": "Harbor Music School"},
+                "primary_recipients": [{"billing_info": {"email_address": "eleanor.hayes@example.com"}}],
+                "items": [{"name": "Piano lessons, block of 8", "quantity": "1", "unit_amount": {"currency_code": "USD", "value": "25.00"}}]}),
+                lambda o: {"id": o.get("id") or o.get("href", "").rstrip("/").split("/")[-1], "detail": "draft created"})
+            iid = draft.get("id") or draft.get("href", "").rstrip("/").split("/")[-1]
+            _step(steps, "Agent Toolkit: send_invoice", lambda: t.run("send_invoice", {"invoice_id": iid, "send_to_recipient": False}),
+                  lambda o: {"id": iid, "detail": "sent (now payable)"})
+            _step(steps, "Agent Toolkit: get_invoice", lambda: t.run("get_invoice", {"invoice_id": iid}),
+                  lambda o: {"id": iid, "detail": f"status {o.get('status')}"})
+            params = {"invoice_id": iid, "note": "Cancelled because the account holder has died. Nothing is owed.", "send_to_recipient": False}
+
+            def refused():
+                try:
+                    pp.call("cancel_sent_invoice", params, actor="live_check", ref="live", on=t)
+                except PermissionError as exc:
+                    return {"refused": str(exc)}
+                raise RuntimeError("the gateway let an unapproved cancel through")
+            _step(steps, "Gateway: cancel WITHOUT an approved action", refused, lambda o: {"id": iid, "detail": "refused before reaching PayPal: " + o["refused"][:90]})
+            act = pp.propose(notice_id="live", merchant_id="m_lab", tool="cancel_sent_invoice", params=params, rationale="Live check: cancel the invoice",
+                             proposed_by="live_check", checks=[{"check": "Invoice was created by this live check", "passed": True, "detail": iid}])
+            _step(steps, "Gateway: cancel WITH an approved action (Agent Toolkit: cancel_sent_invoice)",
+                  lambda: pp.approve(act["id"], "human (you, pressing the button)", on=t),
+                  lambda o: {"id": iid, "detail": f"action {o['id']} {o['status']}, payload hash {o['params_hash'][:12]}…"})
+            _step(steps, "Agent Toolkit: get_invoice (re-read PayPal)", lambda: t.run("get_invoice", {"invoice_id": iid}),
+                  lambda o: {"id": iid, "detail": f"status {o.get('status')}"})
+            ok = steps[-1]["detail"].endswith("CANCELLED")
         except Exception:  # noqa: BLE001
             ok = False
+        finally:
+            db.conn().execute("DELETE FROM pending_actions WHERE notice_id='live'")
+            db.conn().commit()
         res = {"available": True, "ok": ok, "at": db.now(), "steps": steps, "environment": "api-m.sandbox.paypal.com"}
         db.audit("hub", "PAYPAL live check " + ("passed" if ok else "failed"), None, {"steps": [(s["step"], s["ok"]) for s in steps]})
         _last.update(at=time.time(), result=res)

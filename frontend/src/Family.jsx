@@ -349,6 +349,25 @@ export default function Family({ notify, status }) {
     setBusy(true)
     try { setC(await api.post(`/api/cases/${c.id}/notify`)) } catch (e) { notify(e.message, true) } finally { setBusy(false) }
   }
+  // One click for a judge in a hurry: runs the same four real steps a family would, pausing so each can be read.
+  const [auto, setAuto] = useState('')
+  const autoplay = async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+    const show = (i) => document.querySelectorAll('.step')[i]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    try {
+      setAuto('Rachel tells us about her mother, Eleanor…')
+      let k = await api.post('/api/cases', { claimant_name: 'Rachel Hayes', claimant_email: 'rachel.hayes@example.com', relationship: 'daughter', language: 'en', deceased_email: '' })
+      store.set(k.id); setC(k); await wait(1200); show(1)
+      setAuto('Gemini reads the death certificate; eleven checks run…')
+      await api.form(`/api/cases/${k.id}/certificate`, { use_specimen: '1' }); await load(k.id); await wait(3500); show(2)
+      setAuto("Finding everything still charging Eleanor's PayPal account…")
+      await api.form(`/api/cases/${k.id}/activity`, { use_sample: '1' }); await load(k.id); await wait(4500); show(3)
+      setAuto('Sending one signed notice to every company…')
+      setC(await api.post(`/api/cases/${k.id}/notify`)); await wait(600); show(3)
+      setAuto('Billing is paused. Cancellations and refunds wait for the objection window, then run on their own. Watch the board.')
+      await wait(9000)
+    } catch (e) { notify(e.message, true) } finally { setAuto('') }
+  }
   const restart = async () => {
     if (!confirm('Start the demo again from the beginning?')) return
     try { await api.post('/api/demo/reset') } catch { /* ignore */ }
@@ -365,7 +384,9 @@ export default function Family({ notify, status }) {
       <div className="intro">
         <h1>When someone dies, their subscriptions don't.</h1>
         <p>Tell us once. We read the certificate, find everything still charging their PayPal account, and send every company one verified notice. They stop the charges and refund what was taken after the day they died. You don't have to phone anyone.</p>
+        {!c && !auto && <p style={{ margin: '14px 0 0' }}><button className="btn primary" onClick={autoplay}>▶ Run the 60-second demo for me</button> <span className="small muted">or fill it in yourself below</span></p>}
       </div>
+      {auto && <div className="autobar" role="status" aria-live="polite"><span className="autodot" aria-hidden="true" />{auto}</div>}
 
       <Step n="1" title="About you" done={!!c}>
         {c ? <p className="muted" style={{ margin: 0 }}>{c.claimant_name}, {c.relationship}. Replies go to {c.claimant_email}.</p> : <About onStart={start} busy={busy} />}

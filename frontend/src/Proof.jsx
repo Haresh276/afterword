@@ -23,8 +23,9 @@ export default function Proof({ status }) {
       <div className="card">
         <div className="row"><h3 className="grow" style={{ margin: 0 }}>1. Talk to PayPal now</h3>
           <button className="btn primary sm" disabled={busy || status?.paypal_keys === false} onClick={check}>{busy ? 'Calling PayPal' : 'Run live check'}</button></div>
-        <p className="small muted" style={{ margin: '6px 0 0' }}>Signs in to the sandbox, then uses the PayPal Agent Toolkit to create a product, a $1 plan and a subscription
-          for Eleanor Hayes, reads it back, and deactivates the plan again. Nothing is charged.</p>
+        <p className="small muted" style={{ margin: '6px 0 0' }}>Twelve real calls, about ten seconds. It signs in, uses the PayPal Agent Toolkit to create a product, a $1 plan and a
+          subscription for Eleanor Hayes, then sends her a real $25 invoice. The gateway <strong>refuses</strong> to cancel that invoice without an approved action,
+          then cancels it <strong>with</strong> one, and PayPal is read back to confirm. Nothing is charged.</p>
         {status?.paypal_keys === false && <p className="small" style={{ color: 'var(--amber)' }}>This server has no sandbox keys, so the live check is off. The recorded run below is the proof.</p>}
         {live?.steps && (
           <table className="mini" style={{ marginTop: 12 }}>

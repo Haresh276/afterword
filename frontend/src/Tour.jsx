@@ -14,7 +14,7 @@ export default function Tour({ go }) {
         <div className="grow">
           <strong>Judging? Here's the 3-minute tour.</strong> Everything you do happens in your own copy of the demo: it never affects anyone else.
           <ol>
-            <li><button className="linkish" onClick={() => go('family')}>For families</button>: <i>Fill in the demo family</i> → <i>Use the demo specimen</i> → <i>Use the demo export</i> → <i>Tell 7 companies</i>. Watch billing pause, then close.</li>
+            <li><button className="linkish" onClick={() => go('family')}>For families</button>: press <i>Run the 60-second demo for me</i> (or do the four steps by hand). Watch billing pause, then close.</li>
             <li><button className="linkish" onClick={() => go('merchant')}>For businesses</button>: open <i>The Daily Ledger</i> and its notice (the Gemini reviewer has already investigated), then <i>Network insights</i> (AG Studio) and <i>PayPal sandbox proof</i>.</li>
             <li><button className="linkish" onClick={() => go('lab')}>Try to break it</button>: <i>Run every attack</i> (ten, including prompt-injecting the AI reviewer).</li>
           </ol>
