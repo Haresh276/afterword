@@ -55,6 +55,7 @@ async def lifespan(_: FastAPI):
     task = asyncio.create_task(ticker())
     probe_stop = threading.Event()
     threading.Thread(target=llm.keep_probing, args=(probe_stop,), daemon=True, name="llm-probe").start()
+    threading.Thread(target=_stay_awake, args=(probe_stop,), daemon=True, name="stay-awake").start()
     async with mcp_server.server.session_manager.run():
         yield
     stop.set()
@@ -79,6 +80,20 @@ def _window_text(seconds: float) -> str:
     return f"{seconds:g} seconds"
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.mount("/mcp", _mcp_asgi)
+
+
+def _stay_awake(stop: threading.Event) -> None:
+    """Render's free tier sleeps after 15 idle minutes, and a judge shouldn't wait a minute for it to wake.
+    While judging runs, the app requests its own public URL every 10 minutes (Render sets RENDER_EXTERNAL_URL)."""
+    url = os.getenv("RENDER_EXTERNAL_URL")
+    if not url or os.getenv("AFTERWORD_STAY_AWAKE", "1") != "1":
+        return
+    import httpx
+    while not stop.wait(600):
+        try:
+            httpx.get(url.rstrip("/") + "/api/status", timeout=20)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def _404(what: str):
