@@ -1,0 +1,361 @@
+{
+  "title": "Afterword on the real PayPal sandbox",
+  "dry_run": false,
+  "paypal_mode": "sandbox",
+  "environment": "api-m.sandbox.paypal.com",
+  "run_at": "2026-11-10T14:57:00+00:00",
+  "buyer": "sb-…@personal.example.com",
+  "totals": {
+    "found": 7,
+    "notified": 6,
+    "closed": 6,
+    "owed_back": 73.92,
+    "refunded": 55.92,
+    "monthly_stopped": 55.92,
+    "yearly_stopped": 670.99,
+    "yearly_at_risk": 886.97,
+    "next_month_at_risk": 73.92,
+    "paused": 5,
+    "confirmed": 6
+  },
+  "merchants": [
+    {
+      "merchant": "Bookshelf+",
+      "kind": "SUBSCRIPTION",
+      "status": "CLOSED",
+      "refunded": 14.95,
+      "receipt_signature_valid": true,
+      "confirmed_on_paypal": true,
+      "paypal_reread": [
+        {
+          "what": "subscription I-4FJRW7WT85DV",
+          "paypal_status": "CANCELLED",
+          "ok": true
+        },
+        {
+          "what": "charge 5TT34749EC031604L ($14.95)",
+          "paypal_status": "REFUNDED",
+          "ok": true
+        }
+      ],
+      "steps": [
+        {
+          "step": "suspend_subscription",
+          "status": "EXECUTED",
+          "approved_by": "policy:Bookshelf+ auto-close rule",
+          "at": "2026-11-10T14:55:34+00:00",
+          "target": "I-4FJRW7WT85DV",
+          "amount": 0.0,
+          "paypal_id": null,
+          "paypal_status": null,
+          "paypal_debug_id": "ca585e6294c7f",
+          "request_id": "afterword-act_8c4dc7808b"
+        },
+        {
+          "step": "cancel_subscription",
+          "status": "EXECUTED",
+          "approved_by": "policy:Bookshelf+ auto-close rule",
+          "at": "2026-11-10T14:55:37+00:00",
+          "target": "I-4FJRW7WT85DV",
+          "amount": 0.0,
+          "paypal_id": null,
+          "paypal_status": null,
+          "paypal_debug_id": "",
+          "request_id": "afterword-act_3e2f94c225"
+        },
+        {
+          "step": "refund_capture",
+          "status": "EXECUTED",
+          "approved_by": "policy:Bookshelf+ auto-close rule",
+          "at": "2026-11-10T14:55:39+00:00",
+          "target": "5TT34749EC031604L",
+          "amount": 14.95,
+          "paypal_id": "4J787248SU818350J",
+          "paypal_status": "COMPLETED",
+          "paypal_debug_id": "ca585e646f9ed",
+          "request_id": "afterword-act_91fd85ae8c"
+        }
+      ]
+    },
+    {
+      "merchant": "Cloudnest Photos",
+      "kind": "SUBSCRIPTION",
+      "status": "CLOSED",
+      "refunded": 2.99,
+      "receipt_signature_valid": true,
+      "confirmed_on_paypal": true,
+      "paypal_reread": [
+        {
+          "what": "subscription I-0465YLPJFTEX",
+          "paypal_status": "CANCELLED",
+          "ok": true
+        },
+        {
+          "what": "charge 6MD86997EX2875135 ($2.99)",
+          "paypal_status": "REFUNDED",
+          "ok": true
+        }
+      ],
+      "steps": [
+        {
+          "step": "suspend_subscription",
+          "status": "EXECUTED",
+          "approved_by": "policy:Cloudnest Photos auto-close rule",
+          "at": "2026-11-10T14:55:51+00:00",
+          "target": "I-0465YLPJFTEX",
+          "amount": 0.0,
+          "paypal_id": null,
+          "paypal_status": null,
+          "paypal_debug_id": "ca585e69129cc",
+          "request_id": "afterword-act_bb0ee61df7"
+        },
+        {
+          "step": "cancel_subscription",
+          "status": "EXECUTED",
+          "approved_by": "policy:Cloudnest Photos auto-close rule",
+          "at": "2026-11-10T14:55:52+00:00",
+          "target": "I-0465YLPJFTEX",
+          "amount": 0.0,
+          "paypal_id": null,
+          "paypal_status": null,
+          "paypal_debug_id": "",
+          "request_id": "afterword-act_cd7704279b"
+        },
+        {
+          "step": "refund_capture",
+          "status": "EXECUTED",
+          "approved_by": "policy:Cloudnest Photos auto-close rule",
+          "at": "2026-11-10T14:55:54+00:00",
+          "target": "6MD86997EX2875135",
+          "amount": 2.99,
+          "paypal_id": "5A271530WU250672E",
+          "paypal_status": "COMPLETED",
+          "paypal_debug_id": "ca585e6a90b78",
+          "request_id": "afterword-act_99310ff9c7"
+        }
+      ]
+    },
+    {
+      "merchant": "FitPulse",
+      "kind": "SUBSCRIPTION",
+      "status": "CLOSED",
+      "refunded": 9.99,
+      "receipt_signature_valid": true,
+      "confirmed_on_paypal": true,
+      "paypal_reread": [
+        {
+          "what": "subscription I-D4AAUCVDALJC",
+          "paypal_status": "CANCELLED",
+          "ok": true
+        },
+        {
+          "what": "charge 4W926776UY262902B ($9.99)",
+          "paypal_status": "REFUNDED",
+          "ok": true
+        }
+      ],
+      "steps": [
+        {
+          "step": "suspend_subscription",
+          "status": "EXECUTED",
+          "approved_by": "policy:FitPulse auto-close rule",
+          "at": "2026-11-10T14:56:06+00:00",
+          "target": "I-D4AAUCVDALJC",
+          "amount": 0.0,
+          "paypal_id": null,
+          "paypal_status": null,
+          "paypal_debug_id": "ca585e6f7eed1",
+          "request_id": "afterword-act_1ba57de3e4"
+        },
+        {
+          "step": "cancel_subscription",
+          "status": "EXECUTED",
+          "approved_by": "policy:FitPulse auto-close rule",
+          "at": "2026-11-10T14:56:09+00:00",
+          "target": "I-D4AAUCVDALJC",
+          "amount": 0.0,
+          "paypal_id": null,
+          "paypal_status": null,
+          "paypal_debug_id": "",
+          "request_id": "afterword-act_14f2bf794a"
+        },
+        {
+          "step": "refund_capture",
+          "status": "EXECUTED",
+          "approved_by": "policy:FitPulse auto-close rule",
+          "at": "2026-11-10T14:56:11+00:00",
+          "target": "4W926776UY262902B",
+          "amount": 9.99,
+          "paypal_id": "12J22787RP086341M",
+          "paypal_status": "COMPLETED",
+          "paypal_debug_id": "ca585e7109f79",
+          "request_id": "afterword-act_a3b0a237a0"
+        }
+      ]
+    },
+    {
+      "merchant": "StreamBox",
+      "kind": "SUBSCRIPTION",
+      "status": "CLOSED",
+      "refunded": 15.99,
+      "receipt_signature_valid": true,
+      "confirmed_on_paypal": true,
+      "paypal_reread": [
+        {
+          "what": "subscription I-L1ESR5HX7H4R",
+          "paypal_status": "CANCELLED",
+          "ok": true
+        },
+        {
+          "what": "charge 78U38714LC059103X ($15.99)",
+          "paypal_status": "REFUNDED",
+          "ok": true
+        }
+      ],
+      "steps": [
+        {
+          "step": "suspend_subscription",
+          "status": "EXECUTED",
+          "approved_by": "policy:StreamBox auto-close rule",
+          "at": "2026-11-10T14:56:24+00:00",
+          "target": "I-L1ESR5HX7H4R",
+          "amount": 0.0,
+          "paypal_id": null,
+          "paypal_status": null,
+          "paypal_debug_id": "ca585e768ec6f",
+          "request_id": "afterword-act_7dcb3d3cac"
+        },
+        {
+          "step": "cancel_subscription",
+          "status": "EXECUTED",
+          "approved_by": "policy:StreamBox auto-close rule",
+          "at": "2026-11-10T14:56:27+00:00",
+          "target": "I-L1ESR5HX7H4R",
+          "amount": 0.0,
+          "paypal_id": null,
+          "paypal_status": null,
+          "paypal_debug_id": "",
+          "request_id": "afterword-act_d815b35a70"
+        },
+        {
+          "step": "refund_capture",
+          "status": "EXECUTED",
+          "approved_by": "policy:StreamBox auto-close rule",
+          "at": "2026-11-10T14:56:30+00:00",
+          "target": "78U38714LC059103X",
+          "amount": 15.99,
+          "paypal_id": "0XB97674US0072619",
+          "paypal_status": "COMPLETED",
+          "paypal_debug_id": "ca585e785da64",
+          "request_id": "afterword-act_9d16313ac3"
+        }
+      ]
+    },
+    {
+      "merchant": "The Daily Ledger",
+      "kind": "SUBSCRIPTION",
+      "status": "CLOSED",
+      "refunded": 12.0,
+      "receipt_signature_valid": true,
+      "confirmed_on_paypal": true,
+      "paypal_reread": [
+        {
+          "what": "subscription I-KJX5T2203V1K",
+          "paypal_status": "CANCELLED",
+          "ok": true
+        },
+        {
+          "what": "charge 9YP67564CL6351628 ($12.00)",
+          "paypal_status": "REFUNDED",
+          "ok": true
+        }
+      ],
+      "steps": [
+        {
+          "step": "suspend_subscription",
+          "status": "EXECUTED",
+          "approved_by": "policy:The Daily Ledger pauses billing on every verified notice",
+          "at": "2026-11-10T14:56:42+00:00",
+          "target": "I-KJX5T2203V1K",
+          "amount": 0.0,
+          "paypal_id": null,
+          "paypal_status": null,
+          "paypal_debug_id": "ca585e7d09ae2",
+          "request_id": "afterword-act_a984d89956"
+        },
+        {
+          "step": "cancel_subscription",
+          "status": "EXECUTED",
+          "approved_by": "human (merchant support)",
+          "at": "2026-11-10T14:56:50+00:00",
+          "target": "I-KJX5T2203V1K",
+          "amount": 0.0,
+          "paypal_id": null,
+          "paypal_status": null,
+          "paypal_debug_id": "",
+          "request_id": "afterword-act_d134553ea0"
+        },
+        {
+          "step": "refund_capture",
+          "status": "EXECUTED",
+          "approved_by": "human (merchant support)",
+          "at": "2026-11-10T14:56:52+00:00",
+          "target": "9YP67564CL6351628",
+          "amount": 12.0,
+          "paypal_id": "44Y119660P802641A",
+          "paypal_status": "COMPLETED",
+          "paypal_debug_id": "ca585e80f2c87",
+          "request_id": "afterword-act_78aaebafed"
+        }
+      ]
+    },
+    {
+      "merchant": "Harbor Music School",
+      "kind": "INVOICE",
+      "status": "CLOSED",
+      "refunded": 0,
+      "receipt_signature_valid": true,
+      "confirmed_on_paypal": true,
+      "paypal_reread": [
+        {
+          "what": "invoice INV2-LL4L-5LFX-ZDRL-Y5U9",
+          "paypal_status": "CANCELLED",
+          "ok": true
+        }
+      ],
+      "steps": [
+        {
+          "step": "cancel_sent_invoice",
+          "status": "EXECUTED",
+          "approved_by": "policy:Harbor Music School auto-close rule",
+          "at": "2026-11-10T14:56:45+00:00",
+          "target": "INV2-LL4L-5LFX-ZDRL-Y5U9",
+          "amount": 0.0,
+          "paypal_id": null,
+          "paypal_status": null,
+          "paypal_debug_id": "",
+          "request_id": "afterword-act_c7c2c90271"
+        }
+      ]
+    }
+  ],
+  "paypal_calls": {
+    "count": 38,
+    "failed": 0,
+    "by_method": {
+      "show_subscription_details": 10,
+      "list_subscription_transactions": 5,
+      "suspend_subscription": 5,
+      "cancel_subscription": 5,
+      "refund_capture": 5,
+      "get_capture": 5,
+      "get_invoice": 2,
+      "cancel_sent_invoice": 1
+    }
+  },
+  "audit_chain": {
+    "ok": true,
+    "rows_checked": 101,
+    "head": "8502d9279bcb51e48ed4cda62d6a50677370b0679d2dd7d76874c2436486b016"
+  }
+}
