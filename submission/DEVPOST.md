@@ -59,6 +59,7 @@ The first question we asked was the dangerous one: what stops someone reporting 
 - **Toolkit gaps and packaging.** The Python toolkit has no refund, suspend or transactions tool, so we call those endpoints through its authenticated client, behind the same approval gate. Its pinned extras don't install on Python 3.13+, so we install its core alone.
 
 ## Accomplishments that we're proud of
+- **It runs on real PayPal.** A recorded run on real sandbox subscriptions: 38 PayPal calls, 0 failed, $55.92 refunded on real captures, 6 of 6 companies closed and re-confirmed. And any judge can press *Run live check* to watch 12 real sandbox calls, including a real invoice the gateway refuses to cancel without approval.
 - **A reversible-first, two-phase close** with a proof-of-life veto, enforced in the payment gateway rather than the UI.
 - **An agent that investigates but structurally can't spend.** On the hosted demo, we told it (inside the notice) to approve a $5,000 refund to an attacker. Gemini checked PayPal and recommended rejecting: the charge didn't exist.
 - **A red-team page** judges can attack themselves.
