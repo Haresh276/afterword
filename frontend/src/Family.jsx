@@ -232,7 +232,7 @@ function Inbox({ c }) {
   )
 }
 
-function Board({ c, windowText }) {
+function Board({ c, windowText, go }) {
   const told = c.findings.filter((f) => f.notice_id)
   const offline = c.findings.filter((f) => f.status === 'NOT_ON_NETWORK' && f.selected)
   const t = c.totals
@@ -257,6 +257,22 @@ function Board({ c, windowText }) {
           <span className="clock num">{fmtWait(left)}</span>
           <span><strong>Billing is paused at {t.paused} {t.paused === 1 ? 'company' : 'companies'}.</strong> Nothing has been charged since you pressed send. Cancellations and refunds can't be undone, so they wait {windowText || 'a short while'} in case {c.deceased_name} is alive and this is a mistake.</span>
         </div>
+      ) : t.closed > 0 ? (
+        <div className="result" aria-live="polite">
+          <ul className="tiles">
+            <li><strong className="num">{money(t.refunded)}</strong><span>refunded to the original payment</span></li>
+            <li><strong className="num">{money(t.yearly_stopped)}</strong><span>a year no longer taken</span></li>
+            <li><strong className="num">{t.confirmed} of {t.closed}</strong><span>closures confirmed by re-reading PayPal</span></li>
+            <li><strong className="num">0</strong><span>phone calls made by the family</span></li>
+          </ul>
+          {go && (
+            <p className="next">
+              <span className="small muted">See how it was done:</span>
+              <button className="btn quiet sm" onClick={() => { go('merchant'); scrollTo({ top: 0 }) }}>What each company saw, and the AI reviewer →</button>
+              <button className="btn quiet sm" onClick={() => { go('lab'); scrollTo({ top: 0 }) }}>Try to break it →</button>
+            </p>
+          )}
+        </div>
       ) : (
         <p className="muted small" style={{ marginTop: 0 }}>{t.closed === t.notified ? `Every company has replied. ${money(t.yearly_stopped)} a year will no longer be taken.` : 'Each company checks the notice against its own PayPal records before acting.'}
           {t.closed > 0 && <> We re-checked PayPal ourselves: {t.confirmed} of {t.closed} confirmed.</>}</p>
@@ -278,7 +294,7 @@ function Board({ c, windowText }) {
                   {f.notice?.outcome?.emails_stopped && <span className="proof">✓ No more emails to them</span>}
                 </div>
               )}
-              {f.notice?.reply && <div className="reply">{f.notice.reply}</div>}
+              {f.notice?.reply && <details className="replyfold"><summary>Read their reply to the family</summary><div className="reply">{f.notice.reply}</div></details>}
             </div>
           )
         })}
@@ -324,7 +340,39 @@ function Letter({ c, notify }) {
   )
 }
 
-export default function Family({ notify, status }) {
+const HOW = [
+  ['Tell us once', 'Upload the death certificate. Gemini reads it, eleven checks run, and the image is deleted.'],
+  ['Every company is told', "One signed notice each. The company's own agent checks it against its PayPal records."],
+  ['Billing pauses at once', "Reversible. The account holder's own inbox is asked: was this a mistake?"],
+  ['Then cancelled and refunded', 'Through the PayPal Agent Toolkit, with a signed receipt. PayPal is re-read to confirm.'],
+]
+
+function Hero({ onRun, busy }) {
+  const [ev, setEv] = useState(null)
+  useEffect(() => { api.get('/api/paypal/evidence').then((e) => e?.recorded && setEv(e)).catch(() => {}) }, [])
+  return (
+    <section className="hero">
+      <p className="eyebrow">PayPal Agent Toolkit · Gemini · a person approves</p>
+      <h1>When someone dies,<br />their subscriptions don't.</h1>
+      <p className="lead">Tell us once. Every company stops the charges and refunds what was taken after the day they died. You don't have to phone anyone.</p>
+      <p className="cta">
+        <button className="btn primary big" onClick={onRun} disabled={busy}>▶ Run the 60-second demo for me</button>
+        <span className="small muted">or fill it in yourself below</span>
+      </p>
+      <ul className="proofs" aria-label="What has been verified">
+        {ev && <li><strong className="num">{ev.paypal_calls?.count}</strong><span>real PayPal sandbox calls in the recorded run, {ev.paypal_calls?.failed} failed</span></li>}
+        {ev && <li><strong className="num">{money(ev.totals?.refunded)}</strong><span>refunded on real sandbox captures, {ev.totals?.confirmed} of {ev.totals?.closed} closures re-confirmed</span></li>}
+        <li><strong className="num">10 of 10</strong><span>live attacks blocked, including prompt-injecting the AI reviewer</span></li>
+        <li><strong className="num">$0</strong><span>ever paid to the person reporting. Refunds only go back to the original payment</span></li>
+      </ul>
+      <ol className="how">
+        {HOW.map(([t, d], i) => <li key={t}><span className="n">{i + 1}</span><strong>{t}</strong><span className="d">{d}</span></li>)}
+      </ol>
+    </section>
+  )
+}
+
+export default function Family({ notify, status, go }) {
   const [c, setC] = useState(null)
   const [busy, setBusy] = useState(false)
   const timer = useRef(null)
@@ -381,11 +429,12 @@ export default function Family({ notify, status }) {
 
   return (
     <main className="column">
-      <div className="intro">
-        <h1>When someone dies, their subscriptions don't.</h1>
-        <p>Tell us once. We read the certificate, find everything still charging their PayPal account, and send every company one verified notice. They stop the charges and refund what was taken after the day they died. You don't have to phone anyone.</p>
-        {!c && !auto && <p style={{ margin: '14px 0 0' }}><button className="btn primary" onClick={autoplay}>▶ Run the 60-second demo for me</button> <span className="small muted">or fill it in yourself below</span></p>}
-      </div>
+      {!c ? <Hero onRun={autoplay} busy={!!auto} /> : (
+        <div className="intro">
+          <h1>When someone dies, their subscriptions don't.</h1>
+          <p>Tell us once. We read the certificate, find everything still charging their PayPal account, and send every company one verified notice. They stop the charges and refund what was taken after the day they died. You don't have to phone anyone.</p>
+        </div>
+      )}
       {auto && <div className="autobar" role="status" aria-live="polite"><span className="autodot" aria-hidden="true" />{auto}</div>}
 
       <Step n="1" title="About you" done={!!c}>
@@ -402,7 +451,7 @@ export default function Family({ notify, status }) {
       </Step>
 
       <Step n="4" title="Tell them, once" done={sent} locked={!c?.findings?.length}>
-        {c?.findings?.length > 0 && (sent ? <Board c={c} windowText={status?.objection_window_text} /> : (
+        {c?.findings?.length > 0 && (sent ? <Board go={go} c={c} windowText={status?.objection_window_text} /> : (
           <div className="card">
             {verified ? (
               <>

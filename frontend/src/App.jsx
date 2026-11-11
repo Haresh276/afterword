@@ -48,7 +48,7 @@ export default function App() {
         )}
       </header>
       {!alive && <Tour go={(w) => { setWorld(w); window.scrollTo({ top: 0, behavior: 'smooth' }) }} />}
-      {alive ? <Alive token={alive[1]} /> : world === 'family' ? <Family notify={notify} status={status} /> : world === 'lab' ? <Lab notify={notify} /> : <Merchant notify={notify} status={status} />}
+      {alive ? <Alive token={alive[1]} /> : world === 'family' ? <Family go={setWorld} notify={notify} status={status} /> : world === 'lab' ? <Lab notify={notify} /> : <Merchant notify={notify} status={status} />}
       {toast && <div role="status" className={`toast ${toast.err ? 'err' : ''}`}>{toast.msg}</div>}
     </>
   )
