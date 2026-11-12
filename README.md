@@ -24,6 +24,7 @@ Services like Life Ledger already *tell* companies about a death. The charges ke
 Built solo for the **PayPal AI Hackathon 2026** with the **PayPal Agent Toolkit**, **Gemini**, **AG Studio and AG Grid**, **Bryntum Scheduler** and **Render**.
 
 > **Live demo:** https://afterword-6xki.onrender.com (Render free tier: the first visit can take about a minute to wake up). **2-minute video:** https://youtu.be/JPoD5jO1GzE
+> **Two-page judges' brief (PDF):** [docs/Afterword_Judges_Brief.pdf](docs/Afterword_Judges_Brief.pdf)
 > **Run it yourself:** `python scripts/install.py && python scripts/start_demo.py` (Python 3.11+, any OS, no keys, no Node).
 
 <img src="docs/demo.gif" width="100%" alt="One notice: billing paused at every company within seconds, then cancelled and refunded after the objection window, and the timeline turns green">
