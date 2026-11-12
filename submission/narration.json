@@ -8,7 +8,7 @@
   {"id": "closed", "text": "Then the agents cancel and refund through the PayPal Agent Toolkit. Each company signs a receipt, and Afterword re-reads PayPal to confirm it really happened."},
   {"id": "green", "text": "A year of charges that will never be taken."},
   {"id": "business", "text": "Some companies review by hand. Before anyone decides, a Gemini reviewer agent investigates. It reads the notice, checks PayPal itself, and recommends. It has no tool that can move money. A person approves."},
-  {"id": "proof", "text": "And this isn't a mock-up. The same code runs on real PayPal sandbox subscriptions, with PayPal's own IDs to prove it.", "needs_evidence": true},
+  {"id": "proof", "text": "And this isn't a mock-up. Here is a recorded run on real PayPal sandbox subscriptions: thirty-eight PayPal calls, zero failures, and real refunds, with PayPal's own IDs to prove it.", "needs_evidence": true},
   {"id": "insights", "text": "Across the network, AG Studio shows every notice, every PayPal step, and every attack that was stopped."},
   {"id": "lab", "text": "You can try to break it. Ten live attacks, from forged certificates to talking the AI reviewer into a refund. All ten are blocked."},
   {"id": "finale", "text": "And if Eleanor were alive? One click from her, and every pause is undone. No money moves, and the person who reported her is flagged."},

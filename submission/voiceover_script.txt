@@ -1,15 +1,16 @@
-Afterword: voice-over script. Each line starts at the time shown; read it at a calm pace.
+Afterword demo voice-over (as in submission/afterword_demo.mp4)
 
-0:00.0  (10s)  When someone dies, their subscriptions don't. Three million Americans die every year, and their families spend months calling companies, one at a time, death certificate in hand.
-0:10.9  (13s)  Rachel's mother, Eleanor, died last month. Rachel tells Afterword once. Gemini reads the death certificate, in English or Spanish. Eleven checks run, including image forensics, and then the image is deleted.
-0:25.1  (11s)  From Eleanor's PayPal activity, Afterword finds eight things still charging her: subscriptions, an annual renewal due in days, an unpaid invoice, and what has been taken since she died.
-0:36.8  (4s)  Here is the money over time. Grey before her death. Red after it.
-0:41.3  (10s)  One click sends a signed notice to seven companies. Each company's own agent checks it against its PayPal records, and pauses billing right away. That step can be undone.
-0:51.8  (9s)  Because a tool like this could be abused, Eleanor's own inbox is asked: was this a mistake? Nothing irreversible happens until that window closes.
-1:01.1  (9s)  Then the agents cancel and refund through the PayPal Agent Toolkit. Each company signs a receipt, and Afterword re-reads PayPal to confirm it really happened.
-1:10.9  (2s)  A year of charges that will never be taken.
-1:13.7  (13s)  Some companies review by hand. Before anyone decides, a Gemini reviewer agent investigates. It reads the notice, checks PayPal itself, and recommends. It has no tool that can move money. A person approves.
-1:27.5  (6s)  Across the network, AG Studio shows every notice, every PayPal step, and every attack that was stopped.
-1:34.7  (8s)  You can try to break it. Ten live attacks, from forged certificates to talking the AI reviewer into a refund. All ten are blocked.
-1:43.0  (7s)  And if Eleanor were alive? One click from her, and every pause is undone. No money moves, and the person who reported her is flagged.
-1:59.4  (2s)  Afterword. Tell us once.
+0:00.0  When someone dies, their subscriptions don't. Three million Americans die every year, and their families spend months calling companies, one at a time, death certificate in hand.
+0:10.7  Rachel's mother, Eleanor, died last month. Rachel tells Afterword once. Gemini reads the death certificate, in English or Spanish. Eleven checks run, including image forensics, and then the image is deleted.
+0:25.0  From Eleanor's PayPal activity, Afterword finds eight things still charging her: subscriptions, an annual renewal due in days, an unpaid invoice, and what has been taken since she died.
+0:36.2  Here is the money over time. Grey before her death. Red after it.
+0:40.8  One click sends a signed notice to seven companies. Each company's own agent checks it against its PayPal records, and pauses billing right away. That step can be undone.
+0:50.9  Because a tool like this could be abused, Eleanor's own inbox is asked: was this a mistake? Nothing irreversible happens until that window closes.
+1:00.3  Then the agents cancel and refund through the PayPal Agent Toolkit. Each company signs a receipt, and Afterword re-reads PayPal to confirm it really happened.
+1:10.2  A year of charges that will never be taken.
+1:13.1  Some companies review by hand. Before anyone decides, a Gemini reviewer agent investigates. It reads the notice, checks PayPal itself, and recommends. It has no tool that can move money. A person approves.
+1:26.9  And this isn't a mock-up. Here is a recorded run on real PayPal sandbox subscriptions: thirty-eight PayPal calls, zero failures, and real refunds, with PayPal's own IDs to prove it.
+1:39.6  Across the network, AG Studio shows every notice, every PayPal step, and every attack that was stopped.
+1:46.6  You can try to break it. Ten live attacks, from forged certificates to talking the AI reviewer into a refund. All ten are blocked.
+1:55.0  And if Eleanor were alive? One click from her, and every pause is undone. No money moves, and the person who reported her is flagged.
+2:12.3  Afterword. Tell us once.

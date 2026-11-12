@@ -75,6 +75,8 @@ async def main():
         await ctx.add_init_script(CURSOR)
         await ctx.add_init_script("try { localStorage.setItem('aw_tour_closed', '1') } catch (e) {}")
         pg = await ctx.new_page()
+        pg.on("console", lambda m: print("CONSOLE", m.type, m.text[:300], flush=True) if m.type == "error" and "TUNNEL" not in m.text else None)
+        pg.on("pageerror", lambda e: print("PAGEERR", str(e)[:400], flush=True))
         await pg.goto(U)
         await fresh(pg)
         try:   # warm the lazy AG Studio bundle so its scene doesn't open on spinners
@@ -136,9 +138,9 @@ async def main():
             await tap(pg, pg.get_by_role("button", name="Network insights"), 400)
             await pg.wait_for_selector(".studio-wrap canvas", timeout=20000)
             try:   # every widget drawn, none still "Loading..."
-                await pg.wait_for_function("() => { const w = document.querySelector('.studio-wrap'); return w && !/Loading/.test(w.innerText) && document.querySelector('.aw-receipt') }", timeout=25000)
+                await pg.wait_for_function("() => { const r = document.querySelector('.aw-receipt'); return r && /Total/.test(r.innerText) }", timeout=9000)
             except Exception:
-                pass
+                print("receipt not ready:", await pg.evaluate("(document.querySelector('.aw-receipt')||{}).innerText||'NO .aw-receipt'"), flush=True)
             await pg.wait_for_timeout(1500)
         async with Scene("lab"):
             await tap(pg, pg.get_by_role("button", name="Try to break it"), 700)

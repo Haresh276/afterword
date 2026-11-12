@@ -23,16 +23,20 @@ function Receipt({ widgetApi, dataMapping, format }) {
     let live = true
     if (!label || !amount) { widgetApi.setDisplayState('incompleteDataMapping'); return }
     const fields = [label, amount, ...(second ? [second] : [])]
+    let tries = 0
+    const ask = () => widgetApi.getData({ fields }, { onDataUpdated: draw }).then(draw).catch(() => live && widgetApi.setDisplayState('noData'))
     const draw = (res) => {
-      if (!live || res.replaced) return
+      if (!live) return
+      if (!res || res.replaced) { if (tries++ < 4) setTimeout(ask, 300); return }   // never leave the receipt blank
       const out = (res.results?.rows || []).map((r) => ({ name: value(r, label, 0), a: value(r, amount, 1), b: second ? value(r, second, 2) : null }))
         .filter((r) => r.name != null).sort((x, y) => (Number(y.a) || 0) - (Number(x.a) || 0))
       setRows(out)
       widgetApi.setDisplayState(out.length ? 'displayed' : 'noData')
     }
     widgetApi.setDisplayState('loading', { prominent: !rows })
-    widgetApi.getData({ fields }, { queryId: 'receipt', onDataUpdated: draw }).then(draw).catch(() => live && widgetApi.setDisplayState('noData'))
-    return () => { live = false }
+    ask()
+    const guard = setTimeout(() => { if (live && tries < 4) { tries++; ask() } }, 3000)
+    return () => { live = false; clearTimeout(guard) }
   }, [widgetApi, label?.id, amount?.id, second?.id])   // eslint-disable-line react-hooks/exhaustive-deps
   if (!rows) return null
   const total = rows.reduce((s, r) => s + (Number(r.a) || 0), 0)
