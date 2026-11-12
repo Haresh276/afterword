@@ -80,7 +80,7 @@ python, fastapi, sqlite, paypal-agent-toolkit, paypal-rest-api, paypal-subscript
 ## Try it out (links)
 - Live demo: https://afterword-6xki.onrender.com
 - Code: https://github.com/Haresh276/afterword
-- Video: https://youtu.be/x5RrdIOFEAs
+- Video: https://youtu.be/JPoD5jO1GzE
 
 ## Testing instructions (paste into the "testing instructions" or description field)
 - **Hosted demo.** Open the link; the first load can take about a minute on Render's free tier. No login needed.
